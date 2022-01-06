@@ -17,6 +17,7 @@ class TrackedAsset:
         self.symbol = code
         self.macd = 0.0
         self.macd_signal = 0.0
+        self.rsi = 0.0
 
     def __repr__(self):
         return self.symbol
@@ -46,7 +47,15 @@ class TrackedAsset:
             else:
                 self.macd_signal = ((ema_short - ema_long - self.macd_signal) * SMOOTH_9
                                     + self.macd_signal)
+                if i > len(bars) - 4:
+                    print('MACD: ' + repr(ema_short - ema_long))
+                    print('MACD Signal: ' + repr(self.macd_signal))
+        print(self.symbol)
         self.macd = ema_short - ema_long
+
+    def calculate_rsi(self, bars):
+        """Calculate RSI-related values"""
+        self.rsi = bars[0].c
 
     @staticmethod
     def has_enough_volume(bars):

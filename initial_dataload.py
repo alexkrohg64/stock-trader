@@ -27,6 +27,7 @@ def import_asset(code, start_date, end_date):
         return
 
     asset.calculate_macd(bars)
+    asset.calculate_rsi(bars)
     tracked_assets.append(asset)
 
 api = REST()
