@@ -26,8 +26,27 @@ class TrackedAsset:
 
     def calculate_macd(self, bars):
         """Calculate MACD-related values"""
-        self.macd = bars[0].c
-        self.macd_signal = bars[0].c
+        prices = [candle.c for candle in bars]
+
+        ema_short = sum(prices[0:MACD_SHORT_PERIOD]) / MACD_SHORT_PERIOD
+        ema_long = sum(prices[0:MACD_LONG_PERIOD]) / MACD_LONG_PERIOD
+        macd_signal_sum = 0.0
+
+        for i in range(MACD_SHORT_PERIOD, MACD_LONG_PERIOD):
+            ema_short = (bars[i].c - ema_short) * SMOOTH_12 + ema_short
+
+        for i in range(MACD_LONG_PERIOD, len(bars)):
+            ema_short = (bars[i].c - ema_short) * SMOOTH_12 + ema_short
+            ema_long = (bars[i].c - ema_long) * SMOOTH_26 + ema_long
+
+            if i < MACD_LONG_PERIOD + MACD_SIGNAL_PERIOD:
+                macd_signal_sum += ema_short - ema_long
+                if i == MACD_LONG_PERIOD + MACD_SIGNAL_PERIOD - 1:
+                    self.macd_signal = macd_signal_sum / MACD_SIGNAL_PERIOD
+            else:
+                self.macd_signal = ((ema_short - ema_long - self.macd_signal) * SMOOTH_9
+                                    + self.macd_signal)
+        self.macd = ema_short - ema_long
 
     @staticmethod
     def has_enough_volume(bars):
