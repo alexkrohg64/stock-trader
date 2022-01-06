@@ -4,7 +4,7 @@ MACD_LONG_PERIOD = 26
 MACD_SHORT_PERIOD = 12
 MACD_SIGNAL_PERIOD = 9
 RSI_PERIOD = 14
-VOLUME_THRESHOLD = 20000000
+VOLUME_THRESHOLD = 10000000
 
 SMOOTH_9 = 0.2
 SMOOTH_12 = 0.153846153846
@@ -47,7 +47,7 @@ class TrackedAsset:
             else:
                 self.macd_signal = ((ema_short - ema_long - self.macd_signal) * SMOOTH_9
                                     + self.macd_signal)
-                if i > len(bars) - 4:
+                if i == len(bars) - 1:
                     print('MACD: ' + repr(ema_short - ema_long))
                     print('MACD Signal: ' + repr(self.macd_signal))
         print(self.symbol)
