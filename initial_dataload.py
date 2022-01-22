@@ -49,5 +49,5 @@ for symbol in symbols:
 
 print(len(tracked_assets))
 
-with open(file='assets.json', mode='w', encoding='utf-8') as out_file:
-    json.dump(obj=tracked_assets, fp=out_file, cls=tracked_asset.AssetEncoder)
+with open(file='assets.json', mode='w', encoding='utf-8') as asset_file:
+    json.dump(obj=tracked_assets, fp=asset_file, cls=tracked_asset.AssetEncoder)
