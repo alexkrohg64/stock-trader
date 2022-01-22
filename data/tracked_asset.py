@@ -1,4 +1,6 @@
 """Custom asset module for tracking technical analysis data"""
+from json import JSONEncoder
+
 EMA_BIG_LONG_PERIOD = 200
 MACD_LONG_PERIOD = 26
 MACD_SHORT_PERIOD = 12
@@ -111,4 +113,8 @@ class TrackedAsset:
         volumes = [candle.v for candle in bars]
         average_volume = sum(volumes) / len(volumes)
         return average_volume >= VOLUME_THRESHOLD
-    
+
+class AssetEncoder(JSONEncoder):
+    """Serialize custom object"""
+    def default(self, o):
+        return o.__dict__

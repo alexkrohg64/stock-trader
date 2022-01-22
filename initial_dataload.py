@@ -48,4 +48,7 @@ for symbol in symbols:
     sleep(0.3)
 
 print(len(tracked_assets))
-json.dump(tracked_assets, 'data/assets.json')
+
+out_file = open(file='assets.json', mode='w', encoding='utf-8')
+json.dump(obj=tracked_assets, fp=out_file, cls=tracked_asset.AssetEncoder)
+out_file.close()
