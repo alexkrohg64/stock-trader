@@ -1,4 +1,5 @@
 """Custom asset module for tracking technical analysis data"""
+import datetime
 from json import JSONEncoder
 
 EMA_BIG_LONG_PERIOD = 200
@@ -17,17 +18,26 @@ SMOOTH_200 = 0.0099502487562189
 
 class TrackedAsset:
     """Custom asset class for tracking technical analysis data"""
-    def __init__(self, code):
-        self.symbol = code
-        self.ema_short = 0.0
-        self.ema_long = 0.0
-        self.macd = 0.0
-        self.macd_signal = 0.0
-        self.average_gains = 0.0
-        self.average_losses = 0.0
-        self.rsi = []
-        self.ema_big_long = 0.0
-        self.trend = []
+    def __init__(self, symbol, ema_short=0.0, ema_long=0.0, macd=0.0, macd_signal=0.0,
+        average_gains=0.0, average_losses=0.0, rsi=None, ema_big_long=0.0, trend=None,
+        latest_date=None):
+        self.symbol = symbol
+        self.ema_short = ema_short
+        self.ema_long = ema_long
+        self.macd = macd
+        self.macd_signal = macd_signal
+        self.average_gains = average_gains
+        self.average_losses = average_losses
+        if rsi is None:
+            self.rsi = []
+        else:
+            self.rsi = rsi
+        self.ema_big_long = ema_big_long
+        if trend is None:
+            self.trend = []
+        else:
+            self.trend = trend
+        self.latest_date = latest_date
 
     def __repr__(self):
         return self.symbol
@@ -48,6 +58,7 @@ class TrackedAsset:
 
         print('EMA-200: ' + repr(self.ema_big_long))
         print(self.trend)
+        print(self.latest_date)
 
     def calculate_macd(self, prices):
         """Calculate MACD-related values"""
@@ -114,7 +125,14 @@ class TrackedAsset:
         average_volume = sum(volumes) / len(volumes)
         return average_volume >= VOLUME_THRESHOLD
 
+    def update_stats(self, closing_price):
+        """Update technical analysis data with latest closing price"""
+        print(self)
+        print(closing_price)
+
 class AssetEncoder(JSONEncoder):
     """Serialize custom object"""
     def default(self, o):
+        if isinstance(o, datetime.date):
+            return dict(year=o.year, month=o.month, day=o.day)
         return o.__dict__

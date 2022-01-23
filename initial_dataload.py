@@ -22,7 +22,7 @@ def import_asset(code, start_date, end_date):
     if len(bars) > DATA_POINTS:
         print('Warning - excessive data points detected for ' + code + '! Continuing...')
 
-    asset = tracked_asset.TrackedAsset(code)
+    asset = tracked_asset.TrackedAsset(symbol=code, latest_date=bars[len(bars)-1].t.date())
 
     if not asset.has_enough_volume(bars):
         return
