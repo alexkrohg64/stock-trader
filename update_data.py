@@ -2,9 +2,16 @@
 import datetime
 import json
 from time import sleep
+import sys
 # Non-standard imports
 from alpaca_trade_api.rest import REST, TimeFrame
 from data import tracked_asset
+
+# Only perform daily update when the market was open the day before
+with open(file='market.json', mode='r', encoding='utf-8') as market_file:
+    market_was_open_yesterday = json.load(fp=market_file)
+    if not market_was_open_yesterday:
+        sys.exit()
 
 json_assets = []
 tracked_assets = []
@@ -23,12 +30,12 @@ for json_asset in json_assets:
         macd_signal=json_asset['macd_signal'], average_gains=json_asset['average_gains'],
         average_losses=json_asset['average_losses'], rsi=json_asset['rsi'],
         ema_big_long=json_asset['ema_big_long'], trend=json_asset['trend'],
-        latest_date=latest_date))
+        latest_date=latest_date, latest_close=json_asset['latest_close']))
 
 for asset in tracked_assets:
-    target_date = (asset.latest_date + datetime.timedelta(days=1))
-    bars = api.get_bars(symbol=asset.symbol, timeframe=TimeFrame.Day, start=target_date,
-        end=target_date, limit=1)
+    yesterday = datetime.date.today() - datetime.timedelta(days=1)
+    bars = api.get_bars(symbol=asset.symbol, timeframe=TimeFrame.Day, start=yesterday,
+        end=yesterday, limit=1)
 
     if len(bars) != 1:
         raise Exception('Invalid amount of data returned! : ' + repr(len(bars)))
@@ -36,11 +43,14 @@ for asset in tracked_assets:
     candle = bars[0]
     date_of_candle = candle.t.date()
 
-    if date_of_candle != target_date:
-        print('Error! Expected date: ' + repr(target_date))
+    if date_of_candle != yesterday:
+        print('Error! Expected date: ' + repr(yesterday))
         raise Exception('Invalid date of data returned! : ' + repr(date_of_candle))
 
-    asset.update_stats(closing_price=candle.c)
+    if date_of_candle <= asset.latest_date:
+        raise Exception('Duplicate data detected for ' + asset.symbol)
+
+    asset.update_stats(new_price=candle.c, new_date=yesterday)
     # API free-rate limit: 200/min
     sleep(0.3)
 

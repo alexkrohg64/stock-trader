@@ -22,7 +22,9 @@ def import_asset(code, start_date, end_date):
     if len(bars) > DATA_POINTS:
         print('Warning - excessive data points detected for ' + code + '! Continuing...')
 
-    asset = tracked_asset.TrackedAsset(symbol=code, latest_date=bars[len(bars)-1].t.date())
+    latest_bar = bars[len(bars) - 1]
+    asset = tracked_asset.TrackedAsset(symbol=code, latest_date=latest_bar.t.date(),
+        latest_close=latest_bar.c)
 
     if not asset.has_enough_volume(bars):
         return
@@ -40,7 +42,7 @@ assets = api.list_assets(status='active', asset_class='us_equity')
 symbols = [asset.symbol for asset in assets if asset.tradable]
 
 yesterday = datetime.date.today() - datetime.timedelta(days=1)
-starting_date = (yesterday - BDay(DATA_POINTS + 11)).strftime("%Y-%m-%d")
+starting_date = (yesterday - BDay(DATA_POINTS + 12)).strftime("%Y-%m-%d")
 
 for symbol in symbols:
     import_asset(symbol, starting_date, yesterday)

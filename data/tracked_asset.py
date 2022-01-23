@@ -20,7 +20,7 @@ class TrackedAsset:
     """Custom asset class for tracking technical analysis data"""
     def __init__(self, symbol, ema_short=0.0, ema_long=0.0, macd=0.0, macd_signal=0.0,
         average_gains=0.0, average_losses=0.0, rsi=None, ema_big_long=0.0, trend=None,
-        latest_date=None):
+        latest_date=None, latest_close=0.0):
         self.symbol = symbol
         self.ema_short = ema_short
         self.ema_long = ema_long
@@ -38,6 +38,7 @@ class TrackedAsset:
         else:
             self.trend = trend
         self.latest_date = latest_date
+        self.latest_close = latest_close
 
     def __repr__(self):
         return self.symbol
@@ -59,6 +60,7 @@ class TrackedAsset:
         print('EMA-200: ' + repr(self.ema_big_long))
         print(self.trend)
         print(self.latest_date)
+        print(self.latest_close)
 
     def calculate_macd(self, prices):
         """Calculate MACD-related values"""
@@ -104,13 +106,7 @@ class TrackedAsset:
 
         for i in range(RSI_PERIOD, len(prices) - 1):
             change = prices[i+1] - prices[i]
-
-            if change >= 0:
-                self.average_gains = ((RSI_PERIOD - 1) * self.average_gains + change) / RSI_PERIOD
-                self.average_losses = (RSI_PERIOD - 1) * self.average_losses / RSI_PERIOD
-            else:
-                self.average_gains = (RSI_PERIOD - 1) * self.average_gains / RSI_PERIOD
-                self.average_losses = ((RSI_PERIOD - 1) * self.average_losses - change) / RSI_PERIOD
+            self.update_gains_and_losses(change)
 
             if i > (len(prices) - RSI_QUEUE - 2):
                 rsi_value = 100 - 100 / (1 + self.average_gains / self.average_losses)
@@ -125,10 +121,34 @@ class TrackedAsset:
         average_volume = sum(volumes) / len(volumes)
         return average_volume >= VOLUME_THRESHOLD
 
-    def update_stats(self, closing_price):
-        """Update technical analysis data with latest closing price"""
-        print(self)
-        print(closing_price)
+    def update_gains_and_losses(self, change):
+        """Common logic to update RSI-related values"""
+        if change >= 0:
+            self.average_gains = ((RSI_PERIOD - 1) * self.average_gains + change) / RSI_PERIOD
+            self.average_losses = (RSI_PERIOD - 1) * self.average_losses / RSI_PERIOD
+        else:
+            self.average_gains = (RSI_PERIOD - 1) * self.average_gains / RSI_PERIOD
+            self.average_losses = ((RSI_PERIOD - 1) * self.average_losses - change) / RSI_PERIOD
+
+    def update_stats(self, new_price, new_date):
+        """Update technical analysis data"""
+        self.ema_short = (new_price - self.ema_short) * SMOOTH_12 + self.ema_short
+        self.ema_long = (new_price - self.ema_long) * SMOOTH_26 + self.ema_long
+        self.macd = self.ema_short - self.ema_long
+        self.macd_signal = (self.macd - self.macd_signal) * SMOOTH_9 + self.macd_signal
+
+        change = new_price - self.latest_close
+        self.update_gains_and_losses(change=change)
+        self.rsi.pop(0)
+        rsi_value = 100 - 100 / (1 + self.average_gains / self.average_losses)
+        self.rsi.append(rsi_value)
+
+        self.ema_big_long = (new_price - self.ema_big_long) * SMOOTH_200 + self.ema_big_long
+        self.trend.pop(0)
+        self.trend.append(new_price > self.ema_big_long)
+
+        self.latest_date = new_date
+        self.latest_close = new_price
 
 class AssetEncoder(JSONEncoder):
     """Serialize custom object"""
