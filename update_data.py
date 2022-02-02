@@ -1,11 +1,13 @@
 """Update technical analysis data"""
 import datetime
 import json
+import os
 from time import sleep
 import sys
 # Non-standard imports
 from alpaca_trade_api.rest import REST, TimeFrame
 from data import tracked_asset
+import telegram
 
 # Only perform daily update when the market was open the day before
 with open(file='market.json', mode='r', encoding='utf-8') as market_file:
@@ -16,6 +18,7 @@ with open(file='market.json', mode='r', encoding='utf-8') as market_file:
 json_assets = []
 tracked_assets = []
 api = REST()
+telegram_bot = telegram.Bot(token=os.environ['TGM_BOT_TOKEN'])
 
 with open(file='assets.json', mode='r', encoding='utf-8') as asset_file:
     json_assets = json.load(fp=asset_file)
@@ -33,22 +36,33 @@ for json_asset in json_assets:
         latest_date=latest_date, latest_close=json_asset['latest_close']))
 
 for asset in tracked_assets:
+    symbol = asset.symbol
     yesterday = datetime.date.today() - datetime.timedelta(days=1)
-    bars = api.get_bars(symbol=asset.symbol, timeframe=TimeFrame.Day, start=yesterday,
+    bars = api.get_bars(symbol=symbol, timeframe=TimeFrame.Day, start=yesterday,
         end=yesterday, limit=1)
 
     if len(bars) != 1:
-        raise Exception('Invalid amount of data returned! : ' + repr(len(bars)))
+        error_message = 'Error while updating: ' + symbol
+        error_message += '. Invalid amount of data returned: ' + repr(len(bars))
+        telegram_bot.send_message(text=error_message, chat_id=os.environ['TGM_CHAT_ID'])
+        sys.exit()
 
     candle = bars[0]
     date_of_candle = candle.t.date()
 
     if date_of_candle != yesterday:
-        print('Error! Expected date: ' + repr(yesterday))
-        raise Exception('Invalid date of data returned! : ' + repr(date_of_candle))
+        error_message = 'Error while updating: ' + symbol
+        error_message += '. Expected date: ' + repr(yesterday)
+        error_message += '. Date of data returned: ' + repr(date_of_candle)
+        telegram_bot.send_message(text=error_message, chat_id=os.environ['TGM_CHAT_ID'])
+        sys.exit()
 
     if date_of_candle <= asset.latest_date:
-        raise Exception('Duplicate data detected for ' + asset.symbol)
+        error_message = 'Duplicate data detected while updating: ' + symbol
+        error_message += '. Asset latest date: ' + repr(asset.latest_date)
+        error_message += '. Date of candle: ' + repr(date_of_candle)
+        telegram_bot.send_message(text=error_message, chat_id=os.environ['TGM_CHAT_ID'])
+        sys.exit()
 
     asset.update_stats(new_price=candle.c, new_date=yesterday)
     # API free-rate limit: 200/min
