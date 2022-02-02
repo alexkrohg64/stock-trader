@@ -40,9 +40,11 @@ api = REST()
 
 assets = api.list_assets(status='active', asset_class='us_equity')
 symbols = [asset.symbol for asset in assets if asset.tradable]
+# Filter out undesirable assets
+symbols = [symbol for symbol in symbols if symbol not in ['VXX','VIXY','UVXY']]
 
 yesterday = datetime.date.today() - datetime.timedelta(days=1)
-starting_date = (yesterday - BDay(DATA_POINTS + 12)).strftime("%Y-%m-%d")
+starting_date = (yesterday - BDay(DATA_POINTS + 11)).strftime("%Y-%m-%d")
 
 for symbol in symbols:
     import_asset(symbol, starting_date, yesterday)
