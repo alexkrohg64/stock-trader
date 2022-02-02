@@ -6,8 +6,8 @@ from time import sleep
 import sys
 # Non-standard imports
 from alpaca_trade_api.rest import REST, TimeFrame
-from data import tracked_asset
 import telegram
+from data import tracked_asset
 
 # Only perform daily update when the market was open the day before
 with open(file='market.json', mode='r', encoding='utf-8') as market_file:

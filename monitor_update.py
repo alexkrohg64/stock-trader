@@ -19,6 +19,5 @@ today = datetime.date.today()
 
 if mod_time < today:
     telegram_bot = telegram.Bot(token=os.environ['TGM_BOT_TOKEN'])
-    error_message = 'Asset file should have been updated but was not!'
-    telegram_bot.send_message(text=error_message, chat_id=os.environ['TGM_CHAT_ID'])
-
+    ERROR_MESSAGE = 'Asset file should have been updated but was not!'
+    telegram_bot.send_message(text=ERROR_MESSAGE, chat_id=os.environ['TGM_CHAT_ID'])
