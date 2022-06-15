@@ -1,11 +1,13 @@
 """Perform initial dataload"""
 import datetime
+from decimal import Decimal
 import json
 from time import sleep
 # Non-standard imports
 from alpaca_trade_api.rest import REST, TimeFrame
 from pandas.tseries.offsets import BDay
 from data import tracked_asset
+import boto3
 
 DATA_POINTS = 300
 
@@ -44,7 +46,7 @@ symbols = [asset.symbol for asset in assets if asset.tradable]
 symbols = [symbol for symbol in symbols if symbol not in ['VXX','VIXY','UVXY']]
 
 yesterday = datetime.date.today() - datetime.timedelta(days=1)
-starting_date = (yesterday - BDay(DATA_POINTS + 11)).strftime("%Y-%m-%d")
+starting_date = (yesterday - BDay(DATA_POINTS + 8)).strftime("%Y-%m-%d")
 
 for symbol in symbols:
     import_asset(symbol, starting_date, yesterday)
@@ -53,5 +55,18 @@ for symbol in symbols:
 
 print(len(tracked_assets))
 
-with open(file='assets.json', mode='w', encoding='utf-8') as asset_file:
-    json.dump(obj=tracked_assets, fp=asset_file, cls=tracked_asset.AssetEncoder)
+table = boto3.resource('dynamodb').Table('assets')
+table.load()
+
+for asset in tracked_assets:
+    raw_dict = asset.__dict__
+    numbers_dict = {k:Decimal(str(v)) for k, v in raw_dict.items() if isinstance(v, float)}
+    others_dict = {k:v for k, v in raw_dict.items() if not isinstance(v, float)}
+    for index, rsi_value in enumerate(others_dict['rsi']):
+        others_dict['rsi'][index] = Decimal(str(rsi_value))
+    others_dict['latest_date'] = {'year': others_dict['latest_date'].year,
+                                'month': others_dict['latest_date'].month,
+                                'day': others_dict['latest_date'].day}
+    updated_dict = {**numbers_dict, **others_dict}
+    table.put_item(Item=updated_dict)
+
