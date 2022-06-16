@@ -1,6 +1,5 @@
 """Custom asset module for tracking technical analysis data"""
 import datetime
-from json import JSONEncoder
 
 EMA_BIG_LONG_PERIOD = 200
 MACD_LONG_PERIOD = 26
@@ -149,10 +148,3 @@ class TrackedAsset:
 
         self.latest_date = new_date
         self.latest_close = new_price
-
-class AssetEncoder(JSONEncoder):
-    """Serialize custom object"""
-    def default(self, o):
-        if isinstance(o, datetime.date):
-            return dict(year=o.year, month=o.month, day=o.day)
-        return o.__dict__
