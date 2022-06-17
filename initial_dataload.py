@@ -69,4 +69,3 @@ for asset in tracked_assets:
                                 'day': others_dict['latest_date'].day}
     updated_dict = {**numbers_dict, **others_dict}
     table.put_item(Item=updated_dict)
-

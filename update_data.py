@@ -1,72 +1,114 @@
 """Update technical analysis data"""
+import boto3
 import datetime
+from decimal import Decimal
 import json
 import os
 from time import sleep
 import sys
 # Non-standard imports
 from alpaca_trade_api.rest import REST, TimeFrame
+from base64 import b64decode
 import telegram
-from data import tracked_asset
+import tracked_asset
 
-# Only perform daily update when the market was open the day before
-with open(file='market.json', mode='r', encoding='utf-8') as market_file:
-    market_was_open_yesterday = json.load(fp=market_file)
-    if not market_was_open_yesterday:
-        sys.exit()
+LAMBDA_FUNCTION_NAME = os.environ['AWS_LAMBDA_FUNCTION_NAME']
+ID_ENCRYPTED = os.environ['APCA_API_KEY_ID']
+# Decrypt code should run once and variables stored outside of the function
+# handler so that these are decrypted once per container
+os.environ['APCA_API_KEY_ID'] = boto3.client('kms').decrypt(
+    CiphertextBlob=b64decode(ID_ENCRYPTED),
+    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
+)['Plaintext'].decode('utf-8')
 
-json_assets = []
-tracked_assets = []
-api = REST()
-telegram_bot = telegram.Bot(token=os.environ['TGM_BOT_TOKEN'])
+KEY_ENCRYPTED = os.environ['APCA_API_SECRET_KEY']
+os.environ['APCA_API_SECRET_KEY'] = boto3.client('kms').decrypt(
+    CiphertextBlob=b64decode(KEY_ENCRYPTED),
+    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
+)['Plaintext'].decode('utf-8')
 
-with open(file='assets.json', mode='r', encoding='utf-8') as asset_file:
-    json_assets = json.load(fp=asset_file)
+BOT_ENCRYPTED = os.environ['TGM_BOT_TOKEN']
+BOT_DECRYPTED = boto3.client('kms').decrypt(
+    CiphertextBlob=b64decode(BOT_ENCRYPTED),
+    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
+)['Plaintext'].decode('utf-8')
 
-for json_asset in json_assets:
-    dict_date = json_asset['latest_date']
-    latest_date = datetime.date(year=dict_date['year'], month=dict_date['month'],
-        day=dict_date['day'])
+CHAT_ENCRYPTED = os.environ['TGM_CHAT_ID']
+CHAT_DECRYPTED = boto3.client('kms').decrypt(
+    CiphertextBlob=b64decode(CHAT_ENCRYPTED),
+    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
+)['Plaintext'].decode('utf-8')
 
-    tracked_assets.append(tracked_asset.TrackedAsset(symbol=json_asset['symbol'],
-        ema_short=json_asset['ema_short'], ema_long=json_asset['ema_long'], macd=json_asset['macd'],
-        macd_signal=json_asset['macd_signal'], average_gains=json_asset['average_gains'],
-        average_losses=json_asset['average_losses'], rsi=json_asset['rsi'],
-        ema_big_long=json_asset['ema_big_long'], trend=json_asset['trend'],
-        latest_date=latest_date, latest_close=json_asset['latest_close']))
+def lambda_handler(event, context):
+    table = boto3.resource('dynamodb').Table('assets')
+    table.load()
 
-for asset in tracked_assets:
-    symbol = asset.symbol
-    yesterday = datetime.date.today() - datetime.timedelta(days=1)
-    bars = api.get_bars(symbol=symbol, timeframe=TimeFrame.Day, start=yesterday,
-        end=yesterday, limit=1)
+    tracked_assets = []
+    api = REST()
+    telegram_bot = telegram.Bot(token=BOT_DECRYPTED)
 
-    if len(bars) != 1:
-        error_message = 'Error while updating: ' + symbol
-        error_message += '. Invalid amount of data returned: ' + repr(len(bars))
-        telegram_bot.send_message(text=error_message, chat_id=os.environ['TGM_CHAT_ID'])
-        sys.exit()
+    # Only perform daily update when the market was open the day before
+    if not table.get_item(Key={'symbol': 'MARKET_IS_OPEN'})['Item']['market_is_open']:
+        return
 
-    candle = bars[0]
-    date_of_candle = candle.t.date()
+    db_items = table.scan()['Items']
 
-    if date_of_candle != yesterday:
-        error_message = 'Error while updating: ' + symbol
-        error_message += '. Expected date: ' + repr(yesterday)
-        error_message += '. Date of data returned: ' + repr(date_of_candle)
-        telegram_bot.send_message(text=error_message, chat_id=os.environ['TGM_CHAT_ID'])
-        sys.exit()
+    for db_item in db_items:
+        if db_item['symbol'] == 'MARKET_IS_OPEN':
+            continue
+        db_date = db_item['latest_date']
+        latest_date = datetime.date(year=db_date['year'], month=db_date['month'],
+            day=db_date['day'])
 
-    if date_of_candle <= asset.latest_date:
-        error_message = 'Duplicate data detected while updating: ' + symbol
-        error_message += '. Asset latest date: ' + repr(asset.latest_date)
-        error_message += '. Date of candle: ' + repr(date_of_candle)
-        telegram_bot.send_message(text=error_message, chat_id=os.environ['TGM_CHAT_ID'])
-        sys.exit()
+        tracked_assets.append(tracked_asset.TrackedAsset(symbol=db_item['symbol'],
+            ema_short=float(db_item['ema_short']), ema_long=float(db_item['ema_long']),
+            macd=float(db_item['macd']), macd_signal=float(db_item['macd_signal']),
+            average_gains=float(db_item['average_gains']), average_losses=float(db_item['average_losses']),
+            rsi=db_item['rsi'], ema_big_long=float(db_item['ema_big_long']),
+            trend=db_item['trend'], latest_date=latest_date, latest_close=float(db_item['latest_close'])))
 
-    asset.update_stats(new_price=candle.c, new_date=yesterday)
-    # API free-rate limit: 200/min
-    sleep(0.3)
+    for asset in tracked_assets:
+        asset.rsi = [float(rsi_value) for rsi_value in asset.rsi]
+        symbol = asset.symbol
+        yesterday = datetime.date.today() - datetime.timedelta(days=1)
+        bars = api.get_bars(symbol=symbol, timeframe=TimeFrame.Day, start=yesterday,
+            end=yesterday, limit=1)
 
-with open(file='assets.json', mode='w', encoding='utf-8') as asset_file:
-    json.dump(obj=tracked_assets, fp=asset_file, cls=tracked_asset.AssetEncoder)
+        if len(bars) != 1:
+            error_message = 'Error while updating: ' + symbol
+            error_message += '. Invalid amount of data returned: ' + repr(len(bars))
+            telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+            return
+
+        candle = bars[0]
+        date_of_candle = candle.t.date()
+
+        if date_of_candle != yesterday:
+            error_message = 'Error while updating: ' + symbol
+            error_message += '. Expected date: ' + repr(yesterday)
+            error_message += '. Date of data returned: ' + repr(date_of_candle)
+            telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+            return
+
+        if date_of_candle <= asset.latest_date:
+            error_message = 'Duplicate data detected while updating: ' + symbol
+            error_message += '. Asset latest date: ' + repr(asset.latest_date)
+            error_message += '. Date of candle: ' + repr(date_of_candle)
+            telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+            return
+
+        asset.update_stats(new_price=candle.c, new_date=yesterday)
+        # API free-rate limit: 200/min
+        sleep(0.3)
+
+    for asset in tracked_assets:
+        raw_dict = asset.__dict__
+        numbers_dict = {k:Decimal(str(v)) for k, v in raw_dict.items() if isinstance(v, float)}
+        others_dict = {k:v for k, v in raw_dict.items() if not isinstance(v, float)}
+        for index, rsi_value in enumerate(others_dict['rsi']):
+            others_dict['rsi'][index] = Decimal(str(rsi_value))
+        others_dict['latest_date'] = {'year': others_dict['latest_date'].year,
+                                    'month': others_dict['latest_date'].month,
+                                    'day': others_dict['latest_date'].day}
+        updated_dict = {**numbers_dict, **others_dict}
+        table.put_item(Item=updated_dict)
