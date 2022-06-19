@@ -53,5 +53,6 @@ def lambda_handler(event, context):
     table.load()
     table.put_item(Item={
         'symbol': 'MARKET_IS_OPEN',
-        'market_is_open': market_is_open
+        'market_is_open': market_is_open,
+        'day_of_month': today.day
     })

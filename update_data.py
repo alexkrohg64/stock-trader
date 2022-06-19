@@ -47,8 +47,18 @@ def lambda_handler(event, context):
     api = REST()
     telegram_bot = telegram.Bot(token=BOT_DECRYPTED)
 
+    # Ensure data is in sync
+    market_item = table.get_item(Key={'symbol': 'MARKET_IS_OPEN'})['Item']
+    today = datetime.date.today().day
+    if market_item['day_of_month'] != today:
+        error_message = 'Dates do not match up! '
+        error_message += 'DB day: ' + repr(market_item['day_of_month'])
+        error_message += '. Today day: ' + repr(today)
+        telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+        return
+
     # Only perform daily update when the market was open the day before
-    if not table.get_item(Key={'symbol': 'MARKET_IS_OPEN'})['Item']['market_is_open']:
+    if not market_item['market_is_open']:
         return
 
     db_items = table.scan()['Items']
