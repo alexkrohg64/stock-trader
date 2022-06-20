@@ -49,11 +49,11 @@ def lambda_handler(event, context):
 
     # Ensure data is in sync
     market_item = table.get_item(Key={'symbol': 'MARKET_IS_OPEN'})['Item']
-    today = datetime.date.today().day
-    if market_item['day_of_month'] != today:
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).day
+    if market_item['day_of_month'] != yesterday:
         error_message = 'Dates do not match up! '
         error_message += 'DB day: ' + repr(market_item['day_of_month'])
-        error_message += '. Today day: ' + repr(today)
+        error_message += '. Yesterday day: ' + repr(yesterday)
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         return
 
