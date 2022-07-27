@@ -62,6 +62,9 @@ def lambda_handler(event, context):
     if not market_item['market_is_open']:
         return
 
+    # asset_date tracks most recently stored date of all assets, format %Y%m%d
+    asset_date = list_table.get_item(Key={'symbol': 'LATEST_DATE'})['Item']['date']
+
     # Load tracked_assets based off known symbols in asset_list table
     list_items = list_table.scan()['Items']
     for list_item in list_items:
@@ -73,7 +76,7 @@ def lambda_handler(event, context):
         asset_table.load()
 
         # Get most recent record
-        asset_item = asset_table.scan(Limit=1)['Items'][0]
+        asset_item = asset_table.get_item(Key={'date': asset_date})['Item']
         db_date = datetime.datetime.strptime(asset_item['date'], '%Y%m%d').date()
 
         tracked_assets.append(tracked_asset.TrackedAsset(symbol=asset_item['symbol'],
@@ -129,3 +132,10 @@ def lambda_handler(event, context):
         updated_asset_table = boto3.resource('dynamodb').Table(asset.symbol + '_TABLE')
         updated_asset_table.load()
         updated_asset_table.put_item(Item=updated_dict)
+
+    # Update overall asset_date tracker
+    asset_date = tracked_assets[0].latest_date.strftime('%Y%m%d')
+    list_table.put_item(Item={
+        'symbol': 'LATEST_DATE',
+        'date': asset_date
+    })

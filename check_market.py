@@ -49,7 +49,7 @@ def lambda_handler(event, context):
 
     market_is_open = trading_day[0].date.date() == today
 
-    table = boto3.resource('dynamodb').Table('assets')
+    table = boto3.resource('dynamodb').Table('asset_list')
     table.load()
     table.put_item(Item={
         'symbol': 'MARKET_IS_OPEN',
