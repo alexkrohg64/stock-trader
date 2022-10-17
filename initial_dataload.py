@@ -1,12 +1,10 @@
 """Perform initial dataload"""
-import datetime
-from decimal import Decimal
-from time import sleep
-import os
-# Non-standard imports
 from alpaca_trade_api.rest import REST, TimeFrame
-from pandas.tseries.offsets import BDay
 from data import tracked_asset
+from pandas.tseries.offsets import BDay
+from time import sleep
+import datetime
+import os
 import pymongo
 
 DATA_POINTS = 300

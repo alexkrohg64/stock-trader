@@ -1,16 +1,14 @@
 """Update technical analysis data"""
+from alpaca.trading.client import TradingClient
+from base64 import b64decode
+from time import sleep
 import boto3
 import datetime
-from decimal import Decimal
-import json
 import os
-from time import sleep
-import sys
-# Non-standard imports
-from alpaca_trade_api.rest import REST, TimeFrame
-from base64 import b64decode
+import pymongo
 import telegram
 import tracked_asset
+import urllib
 
 LAMBDA_FUNCTION_NAME = os.environ['AWS_LAMBDA_FUNCTION_NAME']
 ID_ENCRYPTED = os.environ['APCA_API_KEY_ID']

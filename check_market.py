@@ -1,12 +1,12 @@
 """Determine and record if the stock market is open today"""
-import boto3
-import datetime
-import os
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetCalendarRequest
 from base64 import b64decode
-import telegram
+import boto3
+import datetime
+import os
 import pymongo
+import telegram
 import urllib
 
 LAMBDA_FUNCTION_NAME = os.environ['AWS_LAMBDA_FUNCTION_NAME']
