@@ -63,7 +63,14 @@ def lambda_handler(event, context):
 
     mongo_client = pymongo.MongoClient(mongo_connection_string)
     mongo_db = mongo_client['stocks']
-    mongo_collection = mongo_db['MARKET_IS_OPEN']
-    market_dict = {'market_is_open': market_is_open, 'day_of_month': today.day}
-    mongo_collection.insert_one(document=market_dict)
+    mongo_collection = mongo_db['MARKET_DATA']
+
+    latest_datetime = datetime.datetime.combine(date=today, time=datetime.datetime.min.time())
+    market_dict = {
+        'my_id': os.environ.get('MARKET_COLLECTION_ID'),
+        'market_is_open': market_is_open,
+        'day_of_month': today.day,
+        'latest_date' : latest_datetime
+    }
+    mongo_collection.replace_one(filter={'my_id': os.environ.get('MARKET_COLLECTION_ID')}, replacement=market_dict)
     mongo_client.close()
