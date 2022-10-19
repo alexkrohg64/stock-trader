@@ -116,7 +116,7 @@ class TrackedAsset:
     @staticmethod
     def has_enough_volume(bars):
         """Check if average daily volume meets configured threshold"""
-        volumes = [candle.v for candle in bars]
+        volumes = [candle.volume for candle in bars]
         average_volume = sum(volumes) / len(volumes)
         return average_volume >= VOLUME_THRESHOLD
 
