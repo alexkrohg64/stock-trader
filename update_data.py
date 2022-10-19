@@ -78,10 +78,7 @@ def lambda_handler(event, context):
     # Gather most recent records for each symbol
     for asset_collection_name in mongo_db.list_collection_names(filter={'name': {'$regex': r"^(?!MARKET_DATA)"}}):
         asset_collection = mongo_db.get_collection(asset_collection_name)
-        # Breathing technique
-        sleep(0.1)
         asset_item = asset_collection.find_one(filter={'latest_date': asset_date})
-        sleep(0.1)
 
         asset = tracked_asset.TrackedAsset(symbol=asset_item['symbol'],
             ema_short=asset_item['ema_short'], ema_long=asset_item['ema_long'],
@@ -91,11 +88,17 @@ def lambda_handler(event, context):
             trend=asset_item['trend'], latest_date=asset_date, latest_close=asset_item['latest_close'])
 
         asset_symbol = asset.symbol
-        api_request = StockBarsRequest(symbol_or_symbols=asset_symbol, start=yesterday,
+        bars_request = StockBarsRequest(symbol_or_symbols=asset_symbol, start=yesterday,
             limit=1, timeframe=TimeFrame.Day)
-        sleep(0.1)
-        bars_response = alpaca_client.get_stock_bars(request_params=api_request)
-        sleep(0.1)
+
+        try:
+            bars_response = alpaca_client.get_stock_bars(request_params=bars_request)
+        except AttributeError:
+            error_message = 'Error fetching data from API for: ' + asset_symbol
+            error_message += '. Abort further processing. Request: ' + repr(bars_request)
+            telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+            return
+
         bars = bars_response.data[asset_symbol]
 
         if len(bars) != 1:
@@ -127,6 +130,8 @@ def lambda_handler(event, context):
         # of potential partial updates to the data. Keep this in
         # mind when troubleshooting future errors.
         asset_collection.insert_one(document=asset.__dict__)
+        # API free-rate limit: 200/min
+        sleep(0.3)
 
     # Update overall asset_date tracker
     market_open_collection.update_one(filter={'my_id': os.environ.get('MARKET_COLLECTION_ID')},

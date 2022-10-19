@@ -49,7 +49,12 @@ def lambda_handler(event, context):
     today = datetime.date.today()
     today_filter = GetCalendarRequest(start=today, end=today)
 
-    trading_calendar = alpaca_client.get_calendar(filters=today_filter)
+    try:
+        trading_calendar = alpaca_client.get_calendar(filters=today_filter)
+    except AttributeError:
+        error_message = 'Error fetching trading calendar! Filter: ' + repr(today_filter)
+        telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+        return
 
     if len(trading_calendar) != 1:
         error_message = 'Unexpected number of trading days returned! : ' + repr(len(trading_calendar))
