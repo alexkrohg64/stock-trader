@@ -78,14 +78,14 @@ def lambda_handler(event, context):
     # Gather most recent records for each symbol
     for asset_collection_name in mongo_db.list_collection_names(filter={'name': {'$regex': r"^(?!MARKET_DATA)"}}):
         asset_collection = mongo_db.get_collection(asset_collection_name)
-        asset_item = asset_collection.find_one(filter={'latest_date': asset_date})
+        asset_item = asset_collection.find_one(filter={'date': asset_date})
 
         asset = tracked_asset.TrackedAsset(symbol=asset_item['symbol'],
             ema_short=asset_item['ema_short'], ema_long=asset_item['ema_long'],
             macd=asset_item['macd'], macd_signal=asset_item['macd_signal'],
             average_gains=asset_item['average_gains'], average_losses=asset_item['average_losses'],
             rsi=asset_item['rsi'], ema_big_long=asset_item['ema_big_long'],
-            trend=asset_item['trend'], latest_date=asset_date, latest_close=asset_item['latest_close'])
+            trend=asset_item['trend'], date=asset_date, close=asset_item['close'])
 
         asset_symbol = asset.symbol
         bars_request = StockBarsRequest(symbol_or_symbols=asset_symbol, start=yesterday,
@@ -117,19 +117,30 @@ def lambda_handler(event, context):
             telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
             return
 
-        if date_of_candle <= asset.latest_date.replace(tzinfo=datetime.timezone.utc):
+        if date_of_candle <= asset.date.replace(tzinfo=datetime.timezone.utc):
             error_message = 'Duplicate data detected while updating: ' + asset_symbol
-            error_message += '. Asset latest date: ' + repr(asset.latest_date)
+            error_message += '. Asset latest date: ' + repr(asset.date)
             error_message += '. Date of candle: ' + repr(date_of_candle)
             telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
             return
 
         asset.update_stats(new_price=candle.close, new_date=yesterday)
-        # Incrementally update DB. This reduces total DB traffic
-        # by only iterating over the data once. Comes with the cost
-        # of potential partial updates to the data. Keep this in
-        # mind when troubleshooting future errors.
-        asset_collection.insert_one(document=asset.__dict__)
+        # Incrementally update DB
+        new_document = {
+            'symbol': asset.symbol,
+            'date': asset.date,
+            'close': asset.close,
+            'ema_short': asset.ema_short,
+            'ema_long': asset.ema_long,
+            'macd': asset.macd,
+            'macd_signal': asset.macd_signal,
+            'average_gains': asset.average_gains,
+            'average_losses': asset.average_losses,
+            'rsi': asset.rsi,
+            'ema_big_long': asset.ema_big_long,
+            'trend': asset.trend
+        }
+        asset_collection.insert_one(document=new_document)
         # API free-rate limit: 200/min
         sleep(0.3)
 
