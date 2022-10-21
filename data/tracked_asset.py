@@ -1,7 +1,9 @@
 """Custom asset module for tracking technical analysis data"""
+from pymongo import MongoClient
 import datetime
 
 EMA_BIG_LONG_PERIOD = 200
+DATA_FRONT_LOAD = 50
 MACD_LONG_PERIOD = 26
 MACD_SHORT_PERIOD = 12
 MACD_SIGNAL_PERIOD = 9
@@ -17,9 +19,9 @@ SMOOTH_200 = 0.0099502487562189
 
 class TrackedAsset:
     """Custom asset class for tracking technical analysis data"""
-    def __init__(self, symbol, ema_short=0.0, ema_long=0.0, macd=0.0, macd_signal=0.0,
-        average_gains=0.0, average_losses=0.0, rsi=None, ema_big_long=0.0, trend=None,
-        latest_date=None, latest_close=0.0):
+    def __init__(self, symbol: str, ema_short: float=0.0, ema_long: float=0.0, macd: float=0.0,
+        macd_signal: float=0.0, average_gains: float=0.0, average_losses: float=0.0, rsi: list=None,
+        ema_big_long: float=0.0, trend: list=None, date: datetime.datetime=None, close: float=0.0):
         self.symbol = symbol
         self.ema_short = ema_short
         self.ema_long = ema_long
@@ -36,8 +38,8 @@ class TrackedAsset:
             self.trend = []
         else:
             self.trend = trend
-        self.latest_date = latest_date
-        self.latest_close = latest_close
+        self.date = date
+        self.close = close
 
     def __repr__(self):
         return self.symbol
@@ -45,23 +47,30 @@ class TrackedAsset:
     def __str__(self):
         return self.symbol
 
-    def calculate_ema_big_long(self, prices):
+    def calculate_ema_big_long(self, prices: list, dates: list, db_client: MongoClient) -> None:
         """Calculate long-period trend line"""
         self.ema_big_long = sum(prices[0:EMA_BIG_LONG_PERIOD]) / EMA_BIG_LONG_PERIOD
 
-        for i in range(EMA_BIG_LONG_PERIOD, len(prices) - TREND_QUEUE):
+        for i in range(EMA_BIG_LONG_PERIOD, len(prices)):
             self.ema_big_long = (prices[i] - self.ema_big_long) * SMOOTH_200 + self.ema_big_long
-
-        for i in range(len(prices) - TREND_QUEUE, len(prices)):
-            self.ema_big_long = (prices[i] - self.ema_big_long) * SMOOTH_200 + self.ema_big_long
-            self.trend.append(prices[i] > self.ema_big_long)
+            if i > len(prices) - DATA_FRONT_LOAD - TREND_QUEUE - 1:
+                self.trend.append(prices[i] > self.ema_big_long)
+                if i > len(prices) - DATA_FRONT_LOAD - 1:
+                    self.trend.pop(0)
+                    update = {
+                        '$set': {
+                            'ema_big_long': self.ema_big_long,
+                            'trend': self.trend
+                        }
+                    }
+                    self.update_db(filter_date=dates[i], update=update, db_client=db_client)
 
         print('EMA-200: ' + repr(self.ema_big_long))
         print(self.trend)
-        print(self.latest_date)
-        print(self.latest_close)
+        print(self.date)
+        print(self.close)
 
-    def calculate_macd(self, prices):
+    def calculate_macd(self, prices: list, dates: list, db_client: MongoClient) -> None:
         """Calculate MACD-related values"""
         self.ema_short = sum(prices[0:MACD_SHORT_PERIOD]) / MACD_SHORT_PERIOD
         self.ema_long = sum(prices[0:MACD_LONG_PERIOD]) / MACD_LONG_PERIOD
@@ -82,12 +91,24 @@ class TrackedAsset:
                 self.macd_signal = ((self.ema_short - self.ema_long - self.macd_signal) * SMOOTH_9
                                     + self.macd_signal)
 
+            if i >= len(prices) - DATA_FRONT_LOAD:
+                new_document = {
+                    'symbol': self.symbol,
+                    'date': dates[i],
+                    'close': prices[i],
+                    'ema_short': self.ema_short,
+                    'ema_long': self.ema_long,
+                    'macd': self.ema_short - self.ema_long,
+                    'macd_signal': self.macd_signal
+                }
+                db_client['stocks'][self.symbol].insert_one(document=new_document)
+
         self.macd = self.ema_short - self.ema_long
         print(self.symbol)
         print('MACD: ' + repr(self.macd))
         print('Signal: ' + repr(self.macd_signal))
 
-    def calculate_rsi(self, prices):
+    def calculate_rsi(self, prices: list, dates: list, db_client: MongoClient) -> None:
         """Calculate RSI-related values"""
         sum_gains = 0.0
         sum_losses = 0.0
@@ -107,20 +128,30 @@ class TrackedAsset:
             change = prices[i+1] - prices[i]
             self.update_gains_and_losses(change)
 
-            if i > (len(prices) - RSI_QUEUE - 2):
+            if i > (len(prices) - DATA_FRONT_LOAD - RSI_QUEUE - 2):
                 rsi_value = 100 - 100 / (1 + self.average_gains / self.average_losses)
                 self.rsi.append(rsi_value)
+                if i > (len(prices) - DATA_FRONT_LOAD - 2):
+                    self.rsi.pop(0)
+                    update = {
+                        '$set': {
+                            'average_gains': self.average_gains,
+                            'average_losses': self.average_losses,
+                            'rsi': self.rsi
+                        }
+                    }
+                    self.update_db(filter_date=dates[i+1], update=update, db_client=db_client)
 
         print('RSI: ' + repr(self.rsi))
 
     @staticmethod
-    def has_enough_volume(bars):
+    def has_enough_volume(bars) -> bool:
         """Check if average daily volume meets configured threshold"""
         volumes = [candle.volume for candle in bars]
         average_volume = sum(volumes) / len(volumes)
         return average_volume >= VOLUME_THRESHOLD
 
-    def update_gains_and_losses(self, change):
+    def update_gains_and_losses(self, change) -> None:
         """Common logic to update RSI-related values"""
         if change >= 0:
             self.average_gains = ((RSI_PERIOD - 1) * self.average_gains + change) / RSI_PERIOD
@@ -129,14 +160,18 @@ class TrackedAsset:
             self.average_gains = (RSI_PERIOD - 1) * self.average_gains / RSI_PERIOD
             self.average_losses = ((RSI_PERIOD - 1) * self.average_losses - change) / RSI_PERIOD
 
-    def update_stats(self, new_price, new_date):
+    def update_db(self, filter_date: datetime.datetime, update: dict, db_client: MongoClient) -> None:
+        collection = db_client['stocks'][self.symbol]
+        collection.update_one(filter={'date': filter_date}, update=update)
+
+    def update_stats(self, new_price, new_date) -> None:
         """Update technical analysis data"""
         self.ema_short = (new_price - self.ema_short) * SMOOTH_12 + self.ema_short
         self.ema_long = (new_price - self.ema_long) * SMOOTH_26 + self.ema_long
         self.macd = self.ema_short - self.ema_long
         self.macd_signal = (self.macd - self.macd_signal) * SMOOTH_9 + self.macd_signal
 
-        change = new_price - self.latest_close
+        change = new_price - self.close
         self.update_gains_and_losses(change=change)
         self.rsi.pop(0)
         rsi_value = 100 - 100 / (1 + self.average_gains / self.average_losses)
@@ -146,5 +181,5 @@ class TrackedAsset:
         self.trend.pop(0)
         self.trend.append(new_price > self.ema_big_long)
 
-        self.latest_date = new_date
-        self.latest_close = new_price
+        self.date = new_date
+        self.close = new_price
