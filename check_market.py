@@ -42,8 +42,10 @@ MONGO_DECRYPTED = boto3.client('kms').decrypt(
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
+
 def lambda_handler(event, context):
-    alpaca_client = TradingClient(api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
+    alpaca_client = TradingClient(
+        api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
     telegram_bot = telegram.Bot(token=BOT_DECRYPTED)
 
     today = datetime.date.today()
@@ -52,12 +54,14 @@ def lambda_handler(event, context):
     try:
         trading_calendar = alpaca_client.get_calendar(filters=today_filter)
     except AttributeError:
-        error_message = 'Error fetching trading calendar! Filter: ' + repr(today_filter)
+        error_message = 'Error fetching trading calendar! Filter: '
+        error_message += repr(today_filter)
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         return
 
     if len(trading_calendar) != 1:
-        error_message = 'Unexpected number of trading days returned! : ' + repr(len(trading_calendar))
+        error_message = 'Unexpected number of trading days returned! : '
+        error_message += repr(len(trading_calendar))
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         return
 
@@ -67,11 +71,13 @@ def lambda_handler(event, context):
         'day_of_month': today.day
     }
 
-    session_encoded = urllib.parse.quote_plus(os.environ.get('AWS_SESSION_TOKEN'))
-    mongo_connection_string = MONGO_DECRYPTED + session_encoded
+    sess_encoded = urllib.parse.quote_plus(os.environ.get('AWS_SESSION_TOKEN'))
+    mongo_connection_string = MONGO_DECRYPTED + sess_encoded
 
     mongo_client = pymongo.MongoClient(mongo_connection_string)
     mongo_db = mongo_client['stocks']
     mongo_collection = mongo_db['MARKET_DATA']
-    mongo_collection.update_one(filter={'my_id': os.environ.get('MARKET_COLLECTION_ID')}, update={'$set': update_dict})
+    mongo_collection.update_one(
+        filter={'my_id': os.environ.get('MARKET_COLLECTION_ID')},
+        update={'$set': update_dict})
     mongo_client.close()
