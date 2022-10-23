@@ -3,14 +3,14 @@ from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from base64 import b64decode
+from datetime import date, datetime, timedelta, timezone
+from pymongo import MongoClient
+from telegram import Bot
 from time import sleep
+from urllib import parse
 import boto3
-import datetime
 import os
-import pymongo
-import telegram
 import tracked_asset
-import urllib
 
 LAMBDA_FUNCTION_NAME = os.environ['AWS_LAMBDA_FUNCTION_NAME']
 ID_ENCRYPTED = os.environ['APCA_API_KEY_ID']
@@ -47,21 +47,21 @@ MONGO_DECRYPTED = boto3.client('kms').decrypt(
 
 
 def lambda_handler(event, context):
-    sess_encoded = urllib.parse.quote_plus(os.environ.get('AWS_SESSION_TOKEN'))
+    sess_encoded = parse.quote_plus(os.environ.get('AWS_SESSION_TOKEN'))
     mongo_connection_string = MONGO_DECRYPTED + sess_encoded
-    mongo_client = pymongo.MongoClient(mongo_connection_string)
+    mongo_client = MongoClient(mongo_connection_string)
     mongo_db = mongo_client['stocks']
 
-    telegram_bot = telegram.Bot(token=BOT_DECRYPTED)
+    telegram_bot = Bot(token=BOT_DECRYPTED)
 
     # Ensure data is in sync
     market_open_collection = mongo_db.get_collection(name='MARKET_DATA')
     market_item = market_open_collection.find_one()
-    yesterday_date = datetime.date.today() - datetime.timedelta(days=1)
+    yesterday_date = date.today() - timedelta(days=1)
     # Convert date to datetime
-    yesterday = datetime.datetime.combine(
-        date=yesterday_date, time=datetime.datetime.min.time(),
-        tzinfo=datetime.timezone.utc)
+    yesterday = datetime.combine(
+        date=yesterday_date, time=datetime.min.time(),
+        tzinfo=timezone.utc)
     if market_item['day_of_month'] != yesterday.day:
         error_message = 'Dates do not match up! '
         error_message += 'DB day: ' + repr(market_item['day_of_month'])
@@ -127,7 +127,7 @@ def lambda_handler(event, context):
             telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
             return
 
-        if date_of_candle <= asset.date.replace(tzinfo=datetime.timezone.utc):
+        if date_of_candle <= asset.date.replace(tzinfo=timezone.utc):
             message = 'Duplicate data detected while updating: ' + asset_symbol
             message += '. Asset latest date: ' + repr(asset.date)
             message += '. Date of candle: ' + repr(date_of_candle)

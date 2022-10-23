@@ -2,12 +2,12 @@
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetCalendarRequest
 from base64 import b64decode
+from datetime import date
+from pymongo import MongoClient
+from telegram import Bot
+from urllib import parse
 import boto3
-import datetime
 import os
-import pymongo
-import telegram
-import urllib
 
 LAMBDA_FUNCTION_NAME = os.environ['AWS_LAMBDA_FUNCTION_NAME']
 ID_ENCRYPTED = os.environ['APCA_API_KEY_ID']
@@ -46,9 +46,9 @@ MONGO_DECRYPTED = boto3.client('kms').decrypt(
 def lambda_handler(event, context):
     alpaca_client = TradingClient(
         api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
-    telegram_bot = telegram.Bot(token=BOT_DECRYPTED)
+    telegram_bot = Bot(token=BOT_DECRYPTED)
 
-    today = datetime.date.today()
+    today = date.today()
     today_filter = GetCalendarRequest(start=today, end=today)
 
     try:
@@ -71,10 +71,10 @@ def lambda_handler(event, context):
         'day_of_month': today.day
     }
 
-    sess_encoded = urllib.parse.quote_plus(os.environ.get('AWS_SESSION_TOKEN'))
+    sess_encoded = parse.quote_plus(os.environ.get('AWS_SESSION_TOKEN'))
     mongo_connection_string = MONGO_DECRYPTED + sess_encoded
 
-    mongo_client = pymongo.MongoClient(mongo_connection_string)
+    mongo_client = MongoClient(mongo_connection_string)
     mongo_db = mongo_client['stocks']
     mongo_collection = mongo_db['MARKET_DATA']
     mongo_collection.update_one(

@@ -8,10 +8,10 @@ from alpaca.trading.enums import AssetExchange
 from alpaca.trading.enums import AssetStatus
 from alpaca.trading.requests import GetAssetsRequest
 from data import tracked_asset
+from datetime import date, datetime
 from pandas.tseries.offsets import BDay
 from pymongo import MongoClient
 from time import sleep
-import datetime
 import os
 
 DATA_POINTS = 300
@@ -27,8 +27,8 @@ alpaca_trading_client = TradingClient(
 mongo_client = MongoClient(os.environ.get('MONGO_CONNECTION_STRING'))
 
 
-def import_asset(code: str, start_date: datetime.datetime,
-                 end_date: datetime.datetime) -> bool:
+def import_asset(code: str, start_date: datetime,
+                 end_date: datetime) -> bool:
     """Fetch and ingest data for given stock symbol"""
     bars_request = StockBarsRequest(
         symbol_or_symbols=code, start=start_date, end=end_date,
@@ -80,8 +80,8 @@ symbols = [asset.symbol for asset in assets
 symbols = [symbol for symbol in symbols if symbol not in
            ['VXX', 'VIXY', 'UVXY']]
 
-today = datetime.datetime.combine(
-    date=datetime.date.today(), time=datetime.datetime.min.time())
+today = datetime.combine(
+    date=date.today(), time=datetime.min.time())
 starting_datetime = (today - BDay(DATA_POINTS + 10))
 
 for symbol in symbols:
