@@ -38,7 +38,7 @@ def get_stock_splits(
     # Loop over API-limited interval of 90 day search period
     # to collect all relevant announcements
     current_date = start_date
-    while current_date < (end_date - timedelta(days=90)):
+    while current_date < end_date:
         news_request = GetCorporateAnnouncementsRequest(
             ca_types=ca_types, since=current_date,
             until=(current_date + timedelta(days=90)))

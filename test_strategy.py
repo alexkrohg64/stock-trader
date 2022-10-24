@@ -33,7 +33,9 @@ while current_date <= end_date:
         if symbol in potential_buys:
             already_processed = True
             if close <= (0.9 * potential_buys[symbol][0]):
-                print('LOSS registered: ' + symbol + ' - ' + repr(close))
+                print('LOSS registered: ' + symbol
+                      + ' - ' + repr(close)
+                      + ' - ' + asset['date'].strftime('%d-%m-%Y'))
                 potential_buys.pop(symbol)
                 continue
             elif close >= (1.1 * potential_buys[symbol][0]):
@@ -41,19 +43,22 @@ while current_date <= end_date:
 
             if (potential_buys[symbol][1]
                     and asset['macd'] <= asset['macd_signal']):
-                print('Sell signal: ' + symbol + ' - ' + repr(close))
+                print('Sell signal: ' + symbol
+                      + ' - ' + repr(close)
+                      + ' - ' + asset['date'].strftime('%d-%m-%Y'))
                 potential_buys.pop(symbol)
 
         elif asset['macd'] > asset['macd_signal']:
             filtered_rsi = [rsi_value for rsi_value in asset['rsi']
                             if rsi_value < TARGET_RSI]
             if len(filtered_rsi) > 0:
-                print('Found potential: ' + symbol + ' - ' + repr(close))
-                potential_buys[symbol] = [close, False]
                 filtered_trend = [trend_value for trend_value in asset['trend']
                                   if trend_value]
                 if len(filtered_trend) > 0:
-                    print('Also passed above trend line! ' + asset['symbol'])
+                    print('Found potential: ' + symbol
+                          + ' - ' + repr(close)
+                          + ' - ' + asset['date'].strftime('%d-%m-%Y'))
+                    potential_buys[symbol] = [close, False]
 
     current_date += timedelta(days=1)
 
