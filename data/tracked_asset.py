@@ -75,11 +75,6 @@ class TrackedAsset:
                         update=update,
                         db_client=db_client)
 
-        print('EMA-200: ' + repr(self.ema_big_long))
-        print(self.trend)
-        print(self.date)
-        print(self.close)
-
     def calculate_macd(
             self, prices: list, dates: list, db_client: MongoClient) -> None:
         """Calculate MACD-related values"""
@@ -121,9 +116,6 @@ class TrackedAsset:
                 db_client['stocks'][self.symbol].insert_one(document=new_doc)
 
         self.macd = self.ema_short - self.ema_long
-        print(self.symbol)
-        print('MACD: ' + repr(self.macd))
-        print('Signal: ' + repr(self.macd_signal))
 
     def calculate_rsi(
             self, prices: list, dates: list, db_client: MongoClient) -> None:
@@ -164,12 +156,13 @@ class TrackedAsset:
                         update=update,
                         db_client=db_client)
 
-        print('RSI: ' + repr(self.rsi))
-
     @staticmethod
     def has_enough_volume(bars) -> bool:
         """Check if average daily volume meets configured threshold"""
         volumes = [candle.volume for candle in bars]
+        # Do not consider any assets that left the market for any time
+        if 0 in volumes:
+            return False
         average_volume = sum(volumes) / len(volumes)
         return average_volume >= VOLUME_THRESHOLD
 
