@@ -12,22 +12,22 @@ from alpaca.trading.requests import GetAssetsRequest
 from alpaca.trading.requests import GetCorporateAnnouncementsRequest
 from data import tracked_asset
 from datetime import date, datetime, timedelta, timezone
+from os import environ
 from pandas.tseries.offsets import BDay
 from pymongo import MongoClient
 from time import sleep
-import os
 
 DATA_POINTS = 300
 
 tracked_assets = []
 
 alpaca_historical_client = StockHistoricalDataClient(
-    api_key=os.environ.get('APCA_API_KEY_ID'),
-    secret_key=os.environ.get('APCA_API_SECRET_KEY'))
+    api_key=environ.get('APCA_API_KEY_ID'),
+    secret_key=environ.get('APCA_API_SECRET_KEY'))
 alpaca_trading_client = TradingClient(
-    api_key=os.environ.get('APCA_API_KEY_ID'),
-    secret_key=os.environ.get('APCA_API_SECRET_KEY'), paper=False)
-mongo_client = MongoClient(os.environ.get('MONGO_CONNECTION_STRING'))
+    api_key=environ.get('APCA_API_KEY_ID'),
+    secret_key=environ.get('APCA_API_SECRET_KEY'), paper=False)
+mongo_client = MongoClient(environ.get('MONGO_CONNECTION_STRING'))
 
 
 def get_stock_splits(
@@ -145,7 +145,7 @@ print(len(tracked_assets))
 
 # Update MARKET_DATA collection
 market_object = {
-    'my_id': os.environ.get('MARKET_COLLECTION_ID'),
+    'my_id': environ.get('MARKET_COLLECTION_ID'),
     'market_is_open': False,
     'day_of_month': today.day,
     'latest_date': tracked_assets[0].date

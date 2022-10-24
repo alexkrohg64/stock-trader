@@ -1,7 +1,7 @@
 """Test trading strategy on historical data"""
 from datetime import datetime, timedelta
+from os import environ
 from pymongo import MongoClient
-import os
 
 # Configurable values
 START_DATE = (2022, 8, 12)
@@ -11,7 +11,7 @@ TARGET_RSI = 30
 # dict[str, tuple(float, bool)]
 potential_buys = {}
 
-mongo_client = MongoClient(os.environ.get('MONGO_CONNECTION_STRING'))
+mongo_client = MongoClient(environ.get('MONGO_CONNECTION_STRING'))
 mongo_db = mongo_client['stocks']
 
 current_date = datetime(

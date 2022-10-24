@@ -2,42 +2,42 @@
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetCalendarRequest
 from base64 import b64decode
+from boto3 import client as boto_client
 from datetime import date
+from os import environ
 from pymongo import MongoClient
 from telegram import Bot
 from urllib import parse
-import boto3
-import os
 
-LAMBDA_FUNCTION_NAME = os.environ['AWS_LAMBDA_FUNCTION_NAME']
-ID_ENCRYPTED = os.environ['APCA_API_KEY_ID']
+LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
+ID_ENCRYPTED = environ['APCA_API_KEY_ID']
 # Decrypt code should run once and variables stored outside of the function
 # handler so that these are decrypted once per container
-ID_DECRYPTED = boto3.client('kms').decrypt(
+ID_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(ID_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
-KEY_ENCRYPTED = os.environ['APCA_API_SECRET_KEY']
-KEY_DECRYPTED = boto3.client('kms').decrypt(
+KEY_ENCRYPTED = environ['APCA_API_SECRET_KEY']
+KEY_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(KEY_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
-BOT_ENCRYPTED = os.environ['TGM_BOT_TOKEN']
-BOT_DECRYPTED = boto3.client('kms').decrypt(
+BOT_ENCRYPTED = environ['TGM_BOT_TOKEN']
+BOT_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(BOT_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
-CHAT_ENCRYPTED = os.environ['TGM_CHAT_ID']
-CHAT_DECRYPTED = boto3.client('kms').decrypt(
+CHAT_ENCRYPTED = environ['TGM_CHAT_ID']
+CHAT_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(CHAT_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
-MONGO_ENCRYPTED = os.environ['MONGO_CONNECTION_STRING']
-MONGO_DECRYPTED = boto3.client('kms').decrypt(
+MONGO_ENCRYPTED = environ['MONGO_CONNECTION_STRING']
+MONGO_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(MONGO_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
@@ -71,13 +71,13 @@ def lambda_handler(event, context):
         'day_of_month': today.day
     }
 
-    sess_encoded = parse.quote_plus(os.environ.get('AWS_SESSION_TOKEN'))
+    sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
     mongo_connection_string = MONGO_DECRYPTED + sess_encoded
 
     mongo_client = MongoClient(mongo_connection_string)
     mongo_db = mongo_client['stocks']
     mongo_collection = mongo_db['MARKET_DATA']
     mongo_collection.update_one(
-        filter={'my_id': os.environ.get('MARKET_COLLECTION_ID')},
+        filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
         update={'$set': update_dict})
     mongo_client.close()
