@@ -50,12 +50,12 @@ def lambda_handler(event, context):
     sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
     mongo_connection_string = MONGO_DECRYPTED + sess_encoded
     mongo_client = MongoClient(mongo_connection_string)
-    mongo_db = mongo_client['stocks']
 
     telegram_bot = Bot(token=BOT_DECRYPTED)
 
     # Ensure data is in sync
-    market_open_collection = mongo_db.get_collection(name='MARKET_DATA')
+    market_open_collection = mongo_client['market'].get_collection(
+        name='MARKET_DATA')
     market_item = market_open_collection.find_one()
     yesterday_date = date.today() - timedelta(days=1)
     # Convert date to datetime
@@ -78,11 +78,11 @@ def lambda_handler(event, context):
 
     alpaca_client = StockHistoricalDataClient(
         api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED)
+    stock_db = mongo_client['stocks']
 
     # Gather most recent records for each symbol
-    for asset_collection_name in mongo_db.list_collection_names(
-            filter={'name': {'$regex': r"^(?!MARKET_DATA)"}}):
-        asset_collection = mongo_db.get_collection(asset_collection_name)
+    for asset_collection_name in stock_db.list_collection_names():
+        asset_collection = stock_db.get_collection(asset_collection_name)
         asset_item = asset_collection.find_one(filter={'date': asset_date})
 
         asset = tracked_asset.TrackedAsset(

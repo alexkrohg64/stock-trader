@@ -75,7 +75,7 @@ def lambda_handler(event, context):
     mongo_connection_string = MONGO_DECRYPTED + sess_encoded
 
     mongo_client = MongoClient(mongo_connection_string)
-    mongo_db = mongo_client['stocks']
+    mongo_db = mongo_client['market']
     mongo_collection = mongo_db['MARKET_DATA']
     mongo_collection.update_one(
         filter={'my_id': environ.get('MARKET_COLLECTION_ID')},

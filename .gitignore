@@ -1,3 +1,4 @@
 .vscode/
 *.json
 data/__pycache__/
+alpaca/

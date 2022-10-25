@@ -25,8 +25,7 @@ end_date = datetime(
 total_days = (end_date - current_date).days
 print('START - $' + repr(funds) + ' - ' + current_date.strftime('%d-%m-%Y'))
 while current_date <= end_date:
-    for asset_collection_name in mongo_db.list_collection_names(
-            filter={'name': {'$regex': r"^(?!MARKET_DATA)"}}):
+    for asset_collection_name in mongo_db.list_collection_names():
         asset_collection = mongo_db.get_collection(asset_collection_name)
         asset = asset_collection.find_one(filter={'date': current_date})
         if asset is None:

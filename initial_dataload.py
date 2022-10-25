@@ -150,5 +150,5 @@ market_object = {
     'day_of_month': today.day,
     'latest_date': tracked_assets[0].date
 }
-mongo_client['stocks']['MARKET_DATA'].insert_one(document=market_object)
+mongo_client['market']['MARKET_DATA'].insert_one(document=market_object)
 mongo_client.close()
