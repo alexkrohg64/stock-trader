@@ -16,31 +16,31 @@ LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
 ID_ENCRYPTED = environ['APCA_API_KEY_ID']
 # Decrypt code should run once and variables stored outside of the function
 # handler so that these are decrypted once per container
-ID_DECRYPTED = boto_client.client('kms').decrypt(
+ID_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(ID_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
 KEY_ENCRYPTED = environ['APCA_API_SECRET_KEY']
-KEY_DECRYPTED = boto_client.client('kms').decrypt(
+KEY_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(KEY_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
 BOT_ENCRYPTED = environ['TGM_BOT_TOKEN']
-BOT_DECRYPTED = boto_client.client('kms').decrypt(
+BOT_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(BOT_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
 CHAT_ENCRYPTED = environ['TGM_CHAT_ID']
-CHAT_DECRYPTED = boto_client.client('kms').decrypt(
+CHAT_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(CHAT_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
 MONGO_ENCRYPTED = environ['MONGO_CONNECTION_STRING']
-MONGO_DECRYPTED = boto_client.client('kms').decrypt(
+MONGO_DECRYPTED = boto_client('kms').decrypt(
     CiphertextBlob=b64decode(MONGO_ENCRYPTED),
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
