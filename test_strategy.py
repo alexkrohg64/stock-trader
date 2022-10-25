@@ -65,7 +65,9 @@ while current_date <= end_date:
                     print('Buy signal: ' + symbol
                           + ' - ' + repr(close)
                           + ' - ' + asset['date'].strftime('%d-%m-%Y'))
-                    if funds < buy_amount:
+                    if close > buy_amount:
+                        print('But price is higher than buy_amount!')
+                    elif funds < buy_amount:
                         print('But not enough money!')
                     else:
                         quantity = floor(buy_amount / close)
