@@ -2,34 +2,27 @@
 from datetime import datetime, timedelta
 from math import floor
 from os import environ
-from pymongo import MongoClient
+from pymongo import MongoClient, ASCENDING
 
 # Configurable values
-START_DATE = (2022, 8, 12)
-END_DATE = (2022, 10, 24)
 TARGET_RSI = 30
-
-# dict[str, list(float, int, bool)]
-portfolio = {}
 funds = 10000
 buy_amount = 1000
+# dict[str, list(float, int, bool)]
+portfolio = {}
 
 mongo_client = MongoClient(environ.get('MONGO_CONNECTION_STRING'))
 mongo_db = mongo_client['stocks']
+start_date = None
+end_date = datetime.now() - timedelta(days=1)
 
-current_date = datetime(
-    year=START_DATE[0], month=START_DATE[1], day=START_DATE[2])
-end_date = datetime(
-    year=END_DATE[0], month=END_DATE[1], day=END_DATE[2])
-
-total_days = (end_date - current_date).days
-print('START - $' + repr(funds) + ' - ' + current_date.strftime('%d-%m-%Y'))
-while current_date <= end_date:
-    for asset_collection_name in mongo_db.list_collection_names():
-        asset_collection = mongo_db.get_collection(asset_collection_name)
-        asset = asset_collection.find_one(filter={'date': current_date})
-        if asset is None:
-            break
+print('START - $' + repr(funds))
+for asset_collection_name in mongo_db.list_collection_names():
+    asset_collection = mongo_db.get_collection(asset_collection_name)
+    asset_cursor = asset_collection.find()
+    for asset in asset_cursor.sort(key_or_list='date', direction=ASCENDING):
+        if start_date is None:
+            start_date = asset['date']
         symbol = asset['symbol']
         close = asset['close']
 
@@ -73,12 +66,12 @@ while current_date <= end_date:
                         funds -= (quantity * close)
                         portfolio[symbol] = [close, quantity, False]
 
-    current_date += timedelta(days=1)
 
 # Undo un-finished positions
 for symbol in portfolio.keys():
     funds += (portfolio[symbol][0] * portfolio[symbol][1])
-print('FINISH - $' + repr(funds) + ' - ' + current_date.strftime('%d-%m-%Y'))
+total_days = (end_date - start_date).days
+print('FINISH - $' + repr(funds))
 print('Total time passed: ' + repr(total_days) + ' days')
 print('ROI: ' + repr((funds - 10000) / 10000 * 100) + '%')
 mongo_client.close()
