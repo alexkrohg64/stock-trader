@@ -42,13 +42,18 @@ MONGO_DECRYPTED = boto_client('kms').decrypt(
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
+alpaca_client = TradingClient(
+    api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
+telegram_bot = Bot(token=BOT_DECRYPTED)
 
-def lambda_handler(event, context):
-    alpaca_client = TradingClient(
-        api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
-    telegram_bot = Bot(token=BOT_DECRYPTED)
+sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
+mongo_connection_string = MONGO_DECRYPTED + sess_encoded
+mongo_client = MongoClient(mongo_connection_string)
 
-    today = date.today()
+today = date.today()
+
+
+def is_market_open() -> bool:
     today_filter = GetCalendarRequest(start=today, end=today)
 
     try:
@@ -57,27 +62,42 @@ def lambda_handler(event, context):
         error_message = 'Error fetching trading calendar! Filter: '
         error_message += repr(today_filter)
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
-        return
+        raise CheckMarketException
 
     if len(trading_calendar) != 1:
         error_message = 'Unexpected number of trading days returned! : '
         error_message += repr(len(trading_calendar))
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
-        return
+        raise CheckMarketException
 
-    market_is_open = trading_calendar[0].date == today
+    return trading_calendar[0].date == today
+
+
+def lambda_handler(event, context):
+    try:
+        market_is_open = is_market_open()
+        update_db(market_is_open)
+    except CheckMarketException:
+        return
+    except Exception as err:
+        error_message = 'Unexpected exception: ' + repr(err)
+        telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+    finally:
+        mongo_client.close()
+
+
+def update_db(market_is_open: bool) -> None:
     update_dict = {
         'market_is_open': market_is_open,
         'day_of_month': today.day
     }
 
-    sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
-    mongo_connection_string = MONGO_DECRYPTED + sess_encoded
-
-    mongo_client = MongoClient(mongo_connection_string)
     mongo_db = mongo_client['market']
     mongo_collection = mongo_db['MARKET_DATA']
     mongo_collection.update_one(
         filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
         update={'$set': update_dict})
-    mongo_client.close()
+
+
+class CheckMarketException(Exception):
+    pass

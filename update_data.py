@@ -9,8 +9,8 @@ from os import environ
 from pymongo import MongoClient
 from telegram import Bot
 from time import sleep
+from tracked_asset import TrackedAsset
 from urllib import parse
-import tracked_asset
 
 LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
 ID_ENCRYPTED = environ['APCA_API_KEY_ID']
@@ -45,47 +45,113 @@ MONGO_DECRYPTED = boto_client('kms').decrypt(
     EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
 )['Plaintext'].decode('utf-8')
 
+sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
+mongo_connection_string = MONGO_DECRYPTED + sess_encoded
+mongo_client = MongoClient(mongo_connection_string)
 
-def lambda_handler(event, context):
-    sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
-    mongo_connection_string = MONGO_DECRYPTED + sess_encoded
-    mongo_client = MongoClient(mongo_connection_string)
+market_open_collection = mongo_client['market'].get_collection(
+    name='MARKET_DATA')
 
-    telegram_bot = Bot(token=BOT_DECRYPTED)
+telegram_bot = Bot(token=BOT_DECRYPTED)
+alpaca_client = StockHistoricalDataClient(
+    api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED)
 
+yesterday_date = date.today() - timedelta(days=1)
+# Convert date to datetime
+yesterday = datetime.combine(
+    date=yesterday_date, time=datetime.min.time(),
+    tzinfo=timezone.utc)
+
+
+def fetch_prices_and_update(asset: TrackedAsset) -> None:
+    asset_symbol = asset.symbol
+    bars_request = StockBarsRequest(
+        symbol_or_symbols=asset_symbol, start=yesterday, limit=1,
+        timeframe=TimeFrame.Day)
+
+    try:
+        bars_response = alpaca_client.get_stock_bars(
+            request_params=bars_request)
+    except AttributeError:
+        message = 'Error fetching data from API for: ' + asset_symbol
+        message += '. Abort. Request: ' + repr(bars_request)
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise UpdateDataException
+
+    bars = bars_response.data[asset_symbol]
+
+    if len(bars) != 1:
+        message = 'Error while updating: ' + asset_symbol
+        message += '. Invalid amount of data returned: ' + repr(len(bars))
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise UpdateDataException
+
+    candle = bars[0]
+    date_of_candle = candle.timestamp.replace(
+        hour=0, minute=0, second=0, microsecond=0)
+
+    if date_of_candle != yesterday:
+        message = 'Error while updating: ' + asset_symbol
+        message += '. Expected date: ' + repr(yesterday)
+        message += '. Date of data returned: ' + repr(date_of_candle)
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise UpdateDataException
+
+    if date_of_candle <= asset.date.replace(tzinfo=timezone.utc):
+        message = 'Duplicate data detected while updating: ' + asset_symbol
+        message += '. Asset latest date: ' + repr(asset.date)
+        message += '. Date of candle: ' + repr(date_of_candle)
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise UpdateDataException
+
+    asset.update_stats(new_price=candle.close, new_date=yesterday)
+
+
+def get_market_date() -> datetime:
     # Ensure data is in sync
-    market_open_collection = mongo_client['market'].get_collection(
-        name='MARKET_DATA')
     market_item = market_open_collection.find_one()
-    yesterday_date = date.today() - timedelta(days=1)
-    # Convert date to datetime
-    yesterday = datetime.combine(
-        date=yesterday_date, time=datetime.min.time(),
-        tzinfo=timezone.utc)
     if market_item['day_of_month'] != yesterday.day:
         error_message = 'Dates do not match up! '
         error_message += 'DB day: ' + repr(market_item['day_of_month'])
         error_message += '. Yesterday day: ' + repr(yesterday.day)
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
-        return
+        raise UpdateDataException
 
     # Only perform daily update when the market was open the day before
     if not market_item['market_is_open']:
-        return
+        raise UpdateDataException
 
     # asset_date tracks most recently stored date of all assets
-    asset_date = market_item['latest_date']
+    return market_item['latest_date']
 
-    alpaca_client = StockHistoricalDataClient(
-        api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED)
-    stock_db = mongo_client['stocks']
 
+def lambda_handler(event, context):
+    try:
+        asset_date = get_market_date()
+
+        process_stocks(asset_date)
+
+        # Update overall asset_date tracker
+        market_open_collection.update_one(
+            filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
+            update={'$set': {'latest_date': yesterday}})
+    except UpdateDataException:
+        return
+    except Exception as err:
+        error_message = 'Unexpected exception: ' + repr(err)
+        telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+    finally:
+        mongo_client.close()
+
+
+def process_stocks(asset_date: datetime) -> None:
     # Gather most recent records for each symbol
+    stock_db = mongo_client['stocks']
     for asset_collection_name in stock_db.list_collection_names():
         asset_collection = stock_db.get_collection(asset_collection_name)
         asset_item = asset_collection.find_one(filter={'date': asset_date})
 
-        asset = tracked_asset.TrackedAsset(
+        asset = TrackedAsset(
             symbol=asset_item['symbol'], ema_short=asset_item['ema_short'],
             ema_long=asset_item['ema_long'], macd=asset_item['macd'],
             macd_signal=asset_item['macd_signal'],
@@ -94,47 +160,8 @@ def lambda_handler(event, context):
             ema_big_long=asset_item['ema_big_long'], trend=asset_item['trend'],
             date=asset_date, close=asset_item['close'])
 
-        asset_symbol = asset.symbol
-        bars_request = StockBarsRequest(
-            symbol_or_symbols=asset_symbol, start=yesterday, limit=1,
-            timeframe=TimeFrame.Day)
+        fetch_prices_and_update(asset)
 
-        try:
-            bars_response = alpaca_client.get_stock_bars(
-                request_params=bars_request)
-        except AttributeError:
-            message = 'Error fetching data from API for: ' + asset_symbol
-            message += '. Abort. Request: ' + repr(bars_request)
-            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-            return
-
-        bars = bars_response.data[asset_symbol]
-
-        if len(bars) != 1:
-            message = 'Error while updating: ' + asset_symbol
-            message += '. Invalid amount of data returned: ' + repr(len(bars))
-            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-            return
-
-        candle = bars[0]
-        date_of_candle = candle.timestamp.replace(
-            hour=0, minute=0, second=0, microsecond=0)
-
-        if date_of_candle != yesterday:
-            message = 'Error while updating: ' + asset_symbol
-            message += '. Expected date: ' + repr(yesterday)
-            message += '. Date of data returned: ' + repr(date_of_candle)
-            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-            return
-
-        if date_of_candle <= asset.date.replace(tzinfo=timezone.utc):
-            message = 'Duplicate data detected while updating: ' + asset_symbol
-            message += '. Asset latest date: ' + repr(asset.date)
-            message += '. Date of candle: ' + repr(date_of_candle)
-            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-            return
-
-        asset.update_stats(new_price=candle.close, new_date=yesterday)
         # Incrementally update DB
         new_document = {
             'symbol': asset.symbol,
@@ -154,8 +181,6 @@ def lambda_handler(event, context):
         # API free-rate limit: 200/min
         sleep(0.3)
 
-    # Update overall asset_date tracker
-    market_open_collection.update_one(
-        filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
-        update={'$set': {'latest_date': yesterday}})
-    mongo_client.close()
+
+class UpdateDataException(Exception):
+    pass
