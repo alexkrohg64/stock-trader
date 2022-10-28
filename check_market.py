@@ -10,37 +10,21 @@ from telegram import Bot
 from urllib import parse
 
 LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
-ID_ENCRYPTED = environ['APCA_API_KEY_ID']
-# Decrypt code should run once and variables stored outside of the function
-# handler so that these are decrypted once per container
-ID_DECRYPTED = boto_client('kms').decrypt(
-    CiphertextBlob=b64decode(ID_ENCRYPTED),
-    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
-)['Plaintext'].decode('utf-8')
+kms_client = boto_client('kms')
 
-KEY_ENCRYPTED = environ['APCA_API_SECRET_KEY']
-KEY_DECRYPTED = boto_client('kms').decrypt(
-    CiphertextBlob=b64decode(KEY_ENCRYPTED),
-    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
-)['Plaintext'].decode('utf-8')
 
-BOT_ENCRYPTED = environ['TGM_BOT_TOKEN']
-BOT_DECRYPTED = boto_client('kms').decrypt(
-    CiphertextBlob=b64decode(BOT_ENCRYPTED),
-    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
-)['Plaintext'].decode('utf-8')
+def decrypt_kms(enc_string: str) -> str:
+    return kms_client.decrypt(
+        CiphertextBlob=b64decode(enc_string),
+        EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
+    )['Plaintext'].decode('utf-8')
 
-CHAT_ENCRYPTED = environ['TGM_CHAT_ID']
-CHAT_DECRYPTED = boto_client('kms').decrypt(
-    CiphertextBlob=b64decode(CHAT_ENCRYPTED),
-    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
-)['Plaintext'].decode('utf-8')
 
-MONGO_ENCRYPTED = environ['MONGO_CONNECTION_STRING']
-MONGO_DECRYPTED = boto_client('kms').decrypt(
-    CiphertextBlob=b64decode(MONGO_ENCRYPTED),
-    EncryptionContext={'LambdaFunctionName': LAMBDA_FUNCTION_NAME}
-)['Plaintext'].decode('utf-8')
+ID_DECRYPTED = decrypt_kms(enc_string=environ['APCA_API_KEY_ID'])
+KEY_DECRYPTED = decrypt_kms(enc_string=environ['APCA_API_SECRET_KEY'])
+BOT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_BOT_TOKEN'])
+CHAT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_CHAT_ID'])
+MONGO_DECRYPTED = decrypt_kms(enc_string=environ['MONGO_CONNECTION_STRING'])
 
 alpaca_client = TradingClient(
     api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
