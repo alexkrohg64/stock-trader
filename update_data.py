@@ -2,6 +2,9 @@
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import CorporateActionType
+from alpaca.trading.requests import GetCorporateAnnouncementsRequest
 from base64 import b64decode
 from boto3 import client as boto_client
 from datetime import date, datetime, timedelta, timezone
@@ -9,7 +12,7 @@ from os import environ
 from pymongo import MongoClient
 from telegram import Bot
 from time import sleep
-from tracked_asset import TrackedAsset
+from data.tracked_asset import TrackedAsset
 from urllib import parse
 
 LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
@@ -37,14 +40,38 @@ market_open_collection = mongo_client['market'].get_collection(
     name='MARKET_DATA')
 
 telegram_bot = Bot(token=BOT_DECRYPTED)
-alpaca_client = StockHistoricalDataClient(
+alpaca_historical_client = StockHistoricalDataClient(
     api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED)
+alpaca_trading_client = TradingClient(
+    api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
 
 yesterday_date = date.today() - timedelta(days=1)
 # Convert date to datetime
 yesterday = datetime.combine(
     date=yesterday_date, time=datetime.min.time(),
     tzinfo=timezone.utc)
+
+
+def check_announcements() -> None:
+    ca_types = [CorporateActionType.SPINOFF, CorporateActionType.SPLIT,
+                CorporateActionType.MERGER]
+    news_request = GetCorporateAnnouncementsRequest(
+            ca_types=ca_types, since=yesterday,
+            until=(yesterday + timedelta(days=90)))
+    announcements = alpaca_trading_client.get_corporate_annoucements(
+            filter=news_request)
+    tracked_symbols = mongo_client['stocks'].list_collection_names()
+    for announcement in announcements:
+        affected_symbol = announcement.target_symbol
+        if affected_symbol in tracked_symbols:
+            message = 'Upcoming event! EX Date: ' + repr(announcement.ex_date)
+            message += '. Symbol: ' + affected_symbol
+            message += '. Type: ' + repr(announcement.ca_type)
+            message += '. Sub type: ' + repr(announcement.ca_sub_type)
+            message += '. Old rate: ' + repr(announcement.old_rate)
+            message += '. New rate: ' + repr(announcement.new_rate)
+            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+            sleep(0.5)
 
 
 def fetch_prices_and_update(asset: TrackedAsset) -> None:
@@ -54,7 +81,7 @@ def fetch_prices_and_update(asset: TrackedAsset) -> None:
         timeframe=TimeFrame.Day)
 
     try:
-        bars_response = alpaca_client.get_stock_bars(
+        bars_response = alpaca_historical_client.get_stock_bars(
             request_params=bars_request)
     except AttributeError:
         message = 'Error fetching data from API for: ' + asset_symbol
@@ -111,6 +138,7 @@ def get_market_date() -> datetime:
 
 def lambda_handler(event, context):
     try:
+        check_announcements()
         asset_date = get_market_date()
         process_stocks(asset_date)
         # Update overall asset_date tracker
