@@ -36,8 +36,8 @@ alpaca_client = TradingClient(
     api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
 telegram_bot = Bot(token=BOT_DECRYPTED)
 
-sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
-mongo_connection_string = MONGO_DECRYPTED + sess_encoded
+session_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
+mongo_connection_string = MONGO_DECRYPTED + session_encoded
 mongo_client = MongoClient(mongo_connection_string)
 stock_db = mongo_client['stocks']
 

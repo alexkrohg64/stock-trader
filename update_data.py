@@ -31,8 +31,8 @@ BOT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_BOT_TOKEN'])
 CHAT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_CHAT_ID'])
 MONGO_DECRYPTED = decrypt_kms(enc_string=environ['MONGO_CONNECTION_STRING'])
 
-sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
-mongo_connection_string = MONGO_DECRYPTED + sess_encoded
+session_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
+mongo_connection_string = MONGO_DECRYPTED + session_encoded
 mongo_client = MongoClient(mongo_connection_string)
 
 market_open_collection = mongo_client['market'].get_collection(
