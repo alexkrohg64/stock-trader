@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 from math import floor
 from os import environ
 
+from alpaca.data.historical.stock import StockHistoricalDataClient
+from alpaca.data.requests import StockLatestTradeRequest
 from pymongo import MongoClient, ASCENDING
 
 # Configurable values
@@ -67,10 +69,16 @@ for asset_collection_name in mongo_db.list_collection_names():
                         funds -= (quantity * close)
                         portfolio[symbol] = [close, quantity, False]
 
+alpaca_client = StockHistoricalDataClient(
+    api_key=environ.get('APCA_API_KEY_ID'),
+    secret_key=environ.get('APCA_API_SECRET_KEY'))
+trades_request = StockLatestTradeRequest(
+    symbol_or_symbols=list(portfolio.keys()))
 
-# Undo un-finished positions
+trades = alpaca_client.get_stock_latest_trade(request_params=trades_request)
+
 for symbol in portfolio.keys():
-    funds += (portfolio[symbol][0] * portfolio[symbol][1])
+    funds += (trades[symbol].price * portfolio[symbol][1])
 total_days = (end_date - start_date).days
 print('FINISH - $' + repr(funds))
 print('Total time passed: ' + repr(total_days) + ' days')
