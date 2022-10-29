@@ -1,14 +1,19 @@
-"""Determine and record if the stock market is open today"""
+"""Determine if the market is open and react to splits and mergers"""
 from base64 import b64decode
-from datetime import date
+from datetime import date, timedelta
 from os import environ
+from time import sleep
 from urllib import parse
 
 from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import CorporateActionType
 from alpaca.trading.requests import GetCalendarRequest
+from alpaca.trading.requests import GetCorporateAnnouncementsRequest
 from boto3 import client as boto_client
-from pymongo import MongoClient
+from pymongo import MongoClient, ASCENDING
 from telegram import Bot
+
+from data.tracked_asset import TrackedAsset
 
 LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
 kms_client = boto_client('kms')
@@ -34,8 +39,45 @@ telegram_bot = Bot(token=BOT_DECRYPTED)
 sess_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
 mongo_connection_string = MONGO_DECRYPTED + sess_encoded
 mongo_client = MongoClient(mongo_connection_string)
+stock_db = mongo_client['stocks']
 
 today = date.today()
+
+
+def check_announcements() -> None:
+    ca_types = [CorporateActionType.SPINOFF, CorporateActionType.SPLIT,
+                CorporateActionType.MERGER]
+    news_request = GetCorporateAnnouncementsRequest(
+            ca_types=ca_types, since=today,
+            until=(today + timedelta(days=10)))
+    announcements = alpaca_client.get_corporate_annoucements(
+            filter=news_request)
+    tracked_symbols = stock_db.list_collection_names()
+    for announcement in announcements:
+        affected_symbol = announcement.target_symbol
+        if affected_symbol in tracked_symbols:
+            if announcement.ca_type == CorporateActionType.MERGER:
+                message = 'Merger detected! Deleting asset: ' + affected_symbol
+                telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+                stock_db.drop_collection(name_or_collection=affected_symbol)
+            elif announcement.ca_type == CorporateActionType.SPLIT:
+                if announcement.ex_date is None:
+                    message = 'Split announcement contains None EX date! '
+                    message += 'Symbol: ' + affected_symbol
+                    telegram_bot.send_message(
+                        text=message, chat_id=CHAT_DECRYPTED)
+                elif announcement.ex_date == today:
+                    message = 'Split detected! Updating: ' + affected_symbol
+                    telegram_bot.send_message(
+                        text=message, chat_id=CHAT_DECRYPTED)
+                    perform_split(symbol=affected_symbol,
+                                  old_rate=announcement.old_rate,
+                                  new_rate=announcement.new_rate)
+            else:  # SPINOFF
+                message = 'Spinoff detected! PANIC: ' + affected_symbol
+                telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+            # Sleep to not overload telegram
+            sleep(0.5)
 
 
 def is_market_open() -> bool:
@@ -61,7 +103,8 @@ def is_market_open() -> bool:
 def lambda_handler(event, context):
     try:
         market_is_open = is_market_open()
-        update_db(market_is_open)
+        update_market_collection(market_is_open)
+        check_announcements()
     except CheckMarketError:
         return
     except Exception as err:
@@ -71,15 +114,35 @@ def lambda_handler(event, context):
         mongo_client.close()
 
 
-def update_db(market_is_open: bool) -> None:
+def perform_split(symbol: str, old_rate: float, new_rate: float) -> None:
+    prices = []
+    dates = []
+    asset_collection = stock_db.get_collection(symbol)
+    asset_cursor = asset_collection.find()
+    # Update all values, assume EX date is today
+    for asset_item in asset_cursor.sort(
+            key_or_list='date', direction=ASCENDING):
+        prices.append(asset_item['close'] * old_rate / new_rate)
+        dates.append(asset_item['date'])
+
+    asset = TrackedAsset(symbol=symbol, date=dates[-1], close=prices[-1])
+    stock_db.drop_collection(name_or_collection=symbol)
+    sleep(0.1)
+    asset.calculate_macd(prices=prices, dates=dates, db_client=mongo_client)
+    asset.calculate_rsi(prices=prices, dates=dates, db_client=mongo_client)
+    asset.calculate_ema_big_long(
+        prices=prices, dates=dates, db_client=mongo_client)
+
+
+def update_market_collection(market_is_open: bool) -> None:
     update_dict = {
         'market_is_open': market_is_open,
         'day_of_month': today.day
     }
 
-    mongo_db = mongo_client['market']
-    mongo_collection = mongo_db['MARKET_DATA']
-    mongo_collection.update_one(
+    market_db = mongo_client['market']
+    market_collection = market_db['MARKET_DATA']
+    market_collection.update_one(
         filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
         update={'$set': update_dict})
 
