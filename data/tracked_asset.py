@@ -1,5 +1,7 @@
 """Custom asset module for tracking technical analysis data"""
 from datetime import datetime
+from typing import Any
+
 from pymongo import MongoClient
 
 EMA_BIG_LONG_PERIOD = 200
@@ -20,13 +22,16 @@ SMOOTH_200 = 0.0099502487562189
 
 class TrackedAsset:
     """Custom asset class for tracking technical analysis data"""
-    def __init__(self, symbol: str, ema_short: float = 0.0,
-                 ema_long: float = 0.0, macd: float = 0.0,
-                 macd_signal: float = 0.0, average_gains: float = 0.0,
-                 average_losses: float = 0.0, rsi: list[float] = None,
-                 ema_big_long: float = 0.0, trend: list[bool] = None,
-                 date: datetime = None, close: float = 0.0):
+    def __init__(
+            self, symbol: str, date: datetime, close: float,
+            ema_short: float = 0.0, ema_long: float = 0.0,
+            macd: float = 0.0, macd_signal: float = 0.0,
+            average_gains: float = 0.0, average_losses: float = 0.0,
+            rsi: list[float] = None, ema_big_long: float = 0.0,
+            trend: list[bool] = None):
         self.symbol = symbol
+        self.date = date
+        self.close = close
         self.ema_short = ema_short
         self.ema_long = ema_long
         self.macd = macd
@@ -42,8 +47,6 @@ class TrackedAsset:
             self.trend = []
         else:
             self.trend = trend
-        self.date = date
-        self.close = close
 
     def __repr__(self):
         return self.symbol
@@ -157,7 +160,7 @@ class TrackedAsset:
                         db_client=db_client)
 
     @staticmethod
-    def has_enough_volume(bars) -> bool:
+    def has_enough_volume(bars: list[Any]) -> bool:
         """Check if average daily volume meets configured threshold"""
         volumes = [candle.volume for candle in bars]
         # Do not consider any assets that left the market for any time
@@ -185,7 +188,7 @@ class TrackedAsset:
         collection = db_client['stocks'][self.symbol]
         collection.update_one(filter={'date': filter_date}, update=update)
 
-    def update_stats(self, new_price, new_date) -> None:
+    def update_stats(self, new_price: float, new_date: datetime) -> None:
         """Update technical analysis data"""
         self.ema_short = ((new_price - self.ema_short) * SMOOTH_12
                           + self.ema_short)

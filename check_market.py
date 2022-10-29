@@ -1,13 +1,14 @@
 """Determine and record if the stock market is open today"""
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import GetCalendarRequest
 from base64 import b64decode
-from boto3 import client as boto_client
 from datetime import date
 from os import environ
+from urllib import parse
+
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import GetCalendarRequest
+from boto3 import client as boto_client
 from pymongo import MongoClient
 from telegram import Bot
-from urllib import parse
 
 LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
 kms_client = boto_client('kms')
@@ -46,13 +47,13 @@ def is_market_open() -> bool:
         error_message = 'Error fetching trading calendar! Filter: '
         error_message += repr(today_filter)
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
-        raise CheckMarketException
+        raise CheckMarketError
 
     if len(trading_calendar) != 1:
         error_message = 'Unexpected number of trading days returned! : '
         error_message += repr(len(trading_calendar))
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
-        raise CheckMarketException
+        raise CheckMarketError
 
     return trading_calendar[0].date == today
 
@@ -61,7 +62,7 @@ def lambda_handler(event, context):
     try:
         market_is_open = is_market_open()
         update_db(market_is_open)
-    except CheckMarketException:
+    except CheckMarketError:
         return
     except Exception as err:
         error_message = 'Unexpected exception: ' + repr(err)
@@ -83,5 +84,5 @@ def update_db(market_is_open: bool) -> None:
         update={'$set': update_dict})
 
 
-class CheckMarketException(Exception):
+class CheckMarketError(Exception):
     pass

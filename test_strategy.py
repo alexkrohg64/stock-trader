@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from math import floor
 from os import environ
+
 from pymongo import MongoClient, ASCENDING
 
 # Configurable values
@@ -50,10 +51,10 @@ for asset_collection_name in mongo_db.list_collection_names():
         elif asset['macd'] > asset['macd_signal']:
             filtered_rsi = [rsi_value for rsi_value in asset['rsi']
                             if rsi_value < TARGET_RSI]
-            if len(filtered_rsi) > 0:
+            if filtered_rsi:
                 filtered_trend = [trend_value for trend_value in asset['trend']
                                   if trend_value]
-                if len(filtered_trend) > 0:
+                if filtered_trend:
                     print('Buy signal: ' + symbol
                           + ' - ' + repr(close)
                           + ' - ' + asset['date'].strftime('%d-%m-%Y'))

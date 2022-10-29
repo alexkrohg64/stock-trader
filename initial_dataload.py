@@ -1,4 +1,8 @@
 """Perform initial dataload"""
+from datetime import date, datetime, timedelta, timezone
+from os import environ
+from time import sleep
+
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -10,12 +14,10 @@ from alpaca.trading.enums import CorporateActionType
 from alpaca.trading.models import CorporateActionAnnouncement
 from alpaca.trading.requests import GetAssetsRequest
 from alpaca.trading.requests import GetCorporateAnnouncementsRequest
-from data import tracked_asset
-from datetime import date, datetime, timedelta, timezone
-from os import environ
 from pandas.tseries.offsets import BDay
 from pymongo import MongoClient
-from time import sleep
+
+from data.tracked_asset import TrackedAsset
 
 DATA_POINTS = 300
 
@@ -78,8 +80,7 @@ def import_asset(code: str, start_date: datetime,
     latest_bar = bars[-1]
     latest_date = latest_bar.timestamp.replace(
         hour=0, minute=0, second=0, microsecond=0)
-    asset = tracked_asset.TrackedAsset(
-        symbol=code, date=latest_date, close=latest_bar.close)
+    asset = TrackedAsset(symbol=code, date=latest_date, close=latest_bar.close)
 
     if not asset.has_enough_volume(bars):
         return False

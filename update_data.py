@@ -1,19 +1,21 @@
 """Update technical analysis data"""
+from base64 import b64decode
+from datetime import date, datetime, timedelta, timezone
+from os import environ
+from time import sleep
+from urllib import parse
+
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import CorporateActionType
 from alpaca.trading.requests import GetCorporateAnnouncementsRequest
-from base64 import b64decode
 from boto3 import client as boto_client
-from datetime import date, datetime, timedelta, timezone
-from os import environ
 from pymongo import MongoClient
 from telegram import Bot
-from time import sleep
+
 from data.tracked_asset import TrackedAsset
-from urllib import parse
 
 LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
 kms_client = boto_client('kms')
@@ -87,7 +89,7 @@ def fetch_prices_and_update(asset: TrackedAsset) -> None:
         message = 'Error fetching data from API for: ' + asset_symbol
         message += '. Abort. Request: ' + repr(bars_request)
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-        raise UpdateDataException
+        raise UpdateDataError
 
     bars = bars_response.data[asset_symbol]
 
@@ -95,7 +97,7 @@ def fetch_prices_and_update(asset: TrackedAsset) -> None:
         message = 'Error while updating: ' + asset_symbol
         message += '. Invalid amount of data returned: ' + repr(len(bars))
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-        raise UpdateDataException
+        raise UpdateDataError
 
     candle = bars[0]
     date_of_candle = candle.timestamp.replace(
@@ -106,14 +108,14 @@ def fetch_prices_and_update(asset: TrackedAsset) -> None:
         message += '. Expected date: ' + repr(yesterday)
         message += '. Date of data returned: ' + repr(date_of_candle)
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-        raise UpdateDataException
+        raise UpdateDataError
 
     if date_of_candle <= asset.date.replace(tzinfo=timezone.utc):
         message = 'Duplicate data detected while updating: ' + asset_symbol
         message += '. Asset latest date: ' + repr(asset.date)
         message += '. Date of candle: ' + repr(date_of_candle)
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-        raise UpdateDataException
+        raise UpdateDataError
 
     asset.update_stats(new_price=candle.close, new_date=yesterday)
 
@@ -126,11 +128,11 @@ def get_market_date() -> datetime:
         error_message += 'DB day: ' + repr(market_item['day_of_month'])
         error_message += '. Yesterday day: ' + repr(yesterday.day)
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
-        raise UpdateDataException
+        raise UpdateDataError
 
     # Only perform daily update when the market was open the day before
     if not market_item['market_is_open']:
-        raise UpdateDataException
+        raise UpdateDataError
 
     # asset_date tracks most recently stored date of all assets
     return market_item['latest_date']
@@ -145,7 +147,7 @@ def lambda_handler(event, context):
         market_open_collection.update_one(
             filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
             update={'$set': {'latest_date': yesterday}})
-    except UpdateDataException:
+    except UpdateDataError:
         return
     except Exception as err:
         error_message = 'Unexpected exception: ' + repr(err)
@@ -162,13 +164,13 @@ def process_stocks(asset_date: datetime) -> None:
         asset_item = asset_collection.find_one(filter={'date': asset_date})
 
         asset = TrackedAsset(
-            symbol=asset_item['symbol'], ema_short=asset_item['ema_short'],
+            symbol=asset_item['symbol'], date=asset_date,
+            close=asset_item['close'], ema_short=asset_item['ema_short'],
             ema_long=asset_item['ema_long'], macd=asset_item['macd'],
             macd_signal=asset_item['macd_signal'],
             average_gains=asset_item['average_gains'],
             average_losses=asset_item['average_losses'], rsi=asset_item['rsi'],
-            ema_big_long=asset_item['ema_big_long'], trend=asset_item['trend'],
-            date=asset_date, close=asset_item['close'])
+            ema_big_long=asset_item['ema_big_long'], trend=asset_item['trend'])
 
         fetch_prices_and_update(asset)
 
@@ -192,5 +194,5 @@ def process_stocks(asset_date: datetime) -> None:
         sleep(0.3)
 
 
-class UpdateDataException(Exception):
+class UpdateDataError(Exception):
     pass
