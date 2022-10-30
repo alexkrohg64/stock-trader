@@ -95,6 +95,7 @@ def fetch_prices_and_update(asset: TrackedAsset) -> None:
 
 
 def get_market_date() -> datetime:
+    """Return latest tracked date, or None if market was not open yesterday"""
     # Ensure data is in sync
     market_item = market_collection.find_one()
     if market_item['day_of_month'] != yesterday.day:
@@ -106,7 +107,7 @@ def get_market_date() -> datetime:
 
     # Only perform daily update when the market was open the day before
     if not market_item['market_is_open']:
-        raise UpdateDataError
+        return None
 
     # asset_date tracks most recently stored date of all assets
     return market_item['latest_date']
@@ -115,11 +116,12 @@ def get_market_date() -> datetime:
 def lambda_handler(event, context):
     try:
         asset_date = get_market_date()
-        process_stocks(asset_date)
-        # Update overall asset_date tracker
-        market_collection.update_one(
-            filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
-            update={'$set': {'latest_date': yesterday}})
+        if asset_date is not None:
+            process_stocks(asset_date)
+            # Update overall latest_date tracker
+            market_collection.update_one(
+                filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
+                update={'$set': {'latest_date': yesterday}})
     except UpdateDataError:
         return
     except Exception as err:

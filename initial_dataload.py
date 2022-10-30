@@ -7,9 +7,7 @@ from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import AssetClass
-from alpaca.trading.enums import AssetExchange
-from alpaca.trading.enums import AssetStatus
+from alpaca.trading.enums import AssetClass, AssetExchange, AssetStatus
 from alpaca.trading.enums import CorporateActionType
 from alpaca.trading.models import CorporateActionAnnouncement
 from alpaca.trading.requests import GetAssetsRequest
