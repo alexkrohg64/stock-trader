@@ -15,7 +15,7 @@ from telegram import Bot
 
 from data.tracked_asset import TrackedAsset
 
-LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
+LAMBDA_FUNCTION_NAME = environ.get('AWS_LAMBDA_FUNCTION_NAME')
 kms_client = boto_client('kms')
 
 
@@ -26,11 +26,12 @@ def decrypt_kms(enc_string: str) -> str:
     )['Plaintext'].decode('utf-8')
 
 
-ID_DECRYPTED = decrypt_kms(enc_string=environ['APCA_API_KEY_ID'])
-KEY_DECRYPTED = decrypt_kms(enc_string=environ['APCA_API_SECRET_KEY'])
-BOT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_BOT_TOKEN'])
-CHAT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_CHAT_ID'])
-MONGO_DECRYPTED = decrypt_kms(enc_string=environ['MONGO_CONNECTION_STRING'])
+ID_DECRYPTED = decrypt_kms(enc_string=environ.get('APCA_API_KEY_ID'))
+KEY_DECRYPTED = decrypt_kms(enc_string=environ.get('APCA_API_SECRET_KEY'))
+BOT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_BOT_TOKEN'))
+CHAT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_CHAT_ID'))
+MONGO_DECRYPTED = decrypt_kms(
+    enc_string=environ.get('MONGO_CONNECTION_STRING'))
 
 alpaca_client = TradingClient(
     api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
@@ -39,7 +40,7 @@ telegram_bot = Bot(token=BOT_DECRYPTED)
 session_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
 mongo_connection_string = MONGO_DECRYPTED + session_encoded
 mongo_client = MongoClient(mongo_connection_string)
-stock_db = mongo_client['stocks']
+stock_db = mongo_client.get_database(name='stocks')
 
 today = date.today()
 
@@ -140,8 +141,8 @@ def update_market_collection(market_is_open: bool) -> None:
         'day_of_month': today.day
     }
 
-    market_db = mongo_client['market']
-    market_collection = market_db['MARKET_DATA']
+    market_db = mongo_client.get_database(name='market')
+    market_collection = market_db.get_collection(name='MARKET_DATA')
     market_collection.update_one(
         filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
         update={'$set': update_dict})

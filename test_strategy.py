@@ -15,7 +15,7 @@ buy_amount = 1000
 portfolio = {}
 
 mongo_client = MongoClient(environ.get('MONGO_CONNECTION_STRING'))
-mongo_db = mongo_client['stocks']
+mongo_db = mongo_client.get_database(name='stocks')
 start_date = None
 end_date = datetime.now() - timedelta(days=1)
 
@@ -73,11 +73,11 @@ alpaca_client = StockHistoricalDataClient(
     api_key=environ.get('APCA_API_KEY_ID'),
     secret_key=environ.get('APCA_API_SECRET_KEY'))
 trades_request = StockLatestTradeRequest(
-    symbol_or_symbols=list(portfolio.keys()))
+    symbol_or_symbols=list(portfolio))
 
 trades = alpaca_client.get_stock_latest_trade(request_params=trades_request)
 
-for symbol in portfolio.keys():
+for symbol in portfolio:
     funds += (trades[symbol].price * portfolio[symbol][1])
 total_days = (end_date - start_date).days
 print('FINISH - $' + repr(funds))

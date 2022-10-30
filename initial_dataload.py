@@ -89,7 +89,7 @@ def import_asset(code: str, start_date: datetime,
     dates = [candle.timestamp.replace(
         hour=0, minute=0, second=0, microsecond=0) for candle in bars]
 
-    if code in stock_split_symbols:
+    if code in stock_splits:
         stock_split = stock_splits[code]
         if stock_split.ca_type == CorporateActionType.SPINOFF:
             print('Unable to process SPINOFF events at this time')
@@ -132,7 +132,6 @@ today = datetime.combine(
 starting_datetime = (today - BDay(DATA_POINTS + 10))
 
 stock_splits = get_stock_splits(start_date=starting_datetime, end_date=today)
-stock_split_symbols = stock_splits.keys()
 
 for symbol in symbols:
     if not import_asset(
@@ -151,5 +150,7 @@ market_object = {
     'day_of_month': today.day,
     'latest_date': tracked_assets[0].date
 }
-mongo_client['market']['MARKET_DATA'].insert_one(document=market_object)
+mongo_db = mongo_client.get_database(name='market')
+mongo_collection = mongo_db.get_collection(name='MARKET_DATA')
+mongo_collection.insert_one(document=market_object)
 mongo_client.close()

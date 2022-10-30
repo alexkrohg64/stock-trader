@@ -14,7 +14,7 @@ from telegram import Bot
 
 from data.tracked_asset import TrackedAsset
 
-LAMBDA_FUNCTION_NAME = environ['AWS_LAMBDA_FUNCTION_NAME']
+LAMBDA_FUNCTION_NAME = environ.get('AWS_LAMBDA_FUNCTION_NAME')
 kms_client = boto_client('kms')
 
 
@@ -25,18 +25,19 @@ def decrypt_kms(enc_string: str) -> str:
     )['Plaintext'].decode('utf-8')
 
 
-ID_DECRYPTED = decrypt_kms(enc_string=environ['APCA_API_KEY_ID'])
-KEY_DECRYPTED = decrypt_kms(enc_string=environ['APCA_API_SECRET_KEY'])
-BOT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_BOT_TOKEN'])
-CHAT_DECRYPTED = decrypt_kms(enc_string=environ['TGM_CHAT_ID'])
-MONGO_DECRYPTED = decrypt_kms(enc_string=environ['MONGO_CONNECTION_STRING'])
+ID_DECRYPTED = decrypt_kms(enc_string=environ.get('APCA_API_KEY_ID'))
+KEY_DECRYPTED = decrypt_kms(enc_string=environ.get('APCA_API_SECRET_KEY'))
+BOT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_BOT_TOKEN'))
+CHAT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_CHAT_ID'))
+MONGO_DECRYPTED = decrypt_kms(
+    enc_string=environ.get('MONGO_CONNECTION_STRING'))
 
 session_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
 mongo_connection_string = MONGO_DECRYPTED + session_encoded
 mongo_client = MongoClient(mongo_connection_string)
 
-market_open_collection = mongo_client['market'].get_collection(
-    name='MARKET_DATA')
+market_db = mongo_client.get_database(name='market')
+market_collection = market_db.get_collection(name='MARKET_DATA')
 
 telegram_bot = Bot(token=BOT_DECRYPTED)
 alpaca_client = StockHistoricalDataClient(
@@ -95,7 +96,7 @@ def fetch_prices_and_update(asset: TrackedAsset) -> None:
 
 def get_market_date() -> datetime:
     # Ensure data is in sync
-    market_item = market_open_collection.find_one()
+    market_item = market_collection.find_one()
     if market_item['day_of_month'] != yesterday.day:
         error_message = 'Dates do not match up! '
         error_message += 'DB day: ' + repr(market_item['day_of_month'])
@@ -116,7 +117,7 @@ def lambda_handler(event, context):
         asset_date = get_market_date()
         process_stocks(asset_date)
         # Update overall asset_date tracker
-        market_open_collection.update_one(
+        market_collection.update_one(
             filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
             update={'$set': {'latest_date': yesterday}})
     except UpdateDataError:
@@ -130,7 +131,7 @@ def lambda_handler(event, context):
 
 def process_stocks(asset_date: datetime) -> None:
     # Gather most recent records for each symbol
-    stock_db = mongo_client['stocks']
+    stock_db = mongo_client.get_database(name='stocks')
     for asset_collection_name in stock_db.list_collection_names():
         asset_collection = stock_db.get_collection(asset_collection_name)
         asset_item = asset_collection.find_one(filter={'date': asset_date})

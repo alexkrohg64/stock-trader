@@ -54,8 +54,8 @@ class TrackedAsset:
     def __str__(self):
         return self.symbol
 
-    def calculate_ema_big_long(
-            self, prices: list, dates: list, db_client: MongoClient) -> None:
+    def calculate_ema_big_long(self, prices: list, dates: list,
+                               mongo_client: MongoClient) -> None:
         """Calculate long-period trend line"""
         self.ema_big_long = sum(
             prices[0:EMA_BIG_LONG_PERIOD]) / EMA_BIG_LONG_PERIOD
@@ -76,10 +76,10 @@ class TrackedAsset:
                     self.update_db(
                         filter_date=dates[i],
                         update=update,
-                        db_client=db_client)
+                        mongo_client=mongo_client)
 
-    def calculate_macd(
-            self, prices: list, dates: list, db_client: MongoClient) -> None:
+    def calculate_macd(self, prices: list, dates: list,
+                       mongo_client: MongoClient) -> None:
         """Calculate MACD-related values"""
         self.ema_short = sum(prices[0:MACD_SHORT_PERIOD]) / MACD_SHORT_PERIOD
         self.ema_long = sum(prices[0:MACD_LONG_PERIOD]) / MACD_LONG_PERIOD
@@ -116,12 +116,14 @@ class TrackedAsset:
                     'macd': self.ema_short - self.ema_long,
                     'macd_signal': self.macd_signal
                 }
-                db_client['stocks'][self.symbol].insert_one(document=new_doc)
+                stock_db = mongo_client.get_database(name='stocks')
+                stock_collection = stock_db.get_collection(name=self.symbol)
+                stock_collection.insert_one(document=new_doc)
 
         self.macd = self.ema_short - self.ema_long
 
-    def calculate_rsi(
-            self, prices: list, dates: list, db_client: MongoClient) -> None:
+    def calculate_rsi(self, prices: list, dates: list,
+                      mongo_client: MongoClient) -> None:
         """Calculate RSI-related values"""
         sum_gains = 0.0
         sum_losses = 0.0
@@ -157,7 +159,7 @@ class TrackedAsset:
                     self.update_db(
                         filter_date=dates[i+1],
                         update=update,
-                        db_client=db_client)
+                        mongo_client=mongo_client)
 
     @staticmethod
     def has_enough_volume(bars: list[Any]) -> bool:
@@ -169,7 +171,7 @@ class TrackedAsset:
         average_volume = sum(volumes) / len(volumes)
         return average_volume >= VOLUME_THRESHOLD
 
-    def update_gains_and_losses(self, change) -> None:
+    def update_gains_and_losses(self, change: float) -> None:
         """Common logic to update RSI-related values"""
         if change >= 0:
             self.average_gains = (
@@ -184,8 +186,9 @@ class TrackedAsset:
 
     def update_db(
             self, filter_date: datetime, update: dict,
-            db_client: MongoClient) -> None:
-        collection = db_client['stocks'][self.symbol]
+            mongo_client: MongoClient) -> None:
+        stock_db = mongo_client.get_database(name='stocks')
+        collection = stock_db.get_collection(name=self.symbol)
         collection.update_one(filter={'date': filter_date}, update=update)
 
     def update_stats(self, new_price: float, new_date: datetime) -> None:
