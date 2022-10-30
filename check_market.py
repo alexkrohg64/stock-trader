@@ -1,16 +1,20 @@
 """Determine if the market is open and react to splits and mergers"""
 from base64 import b64decode
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from os import environ
 from time import sleep
 from urllib import parse
 
+from alpaca.data.historical.stock import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import CorporateActionType
 from alpaca.trading.requests import GetCalendarRequest
 from alpaca.trading.requests import GetCorporateAnnouncementsRequest
 from boto3 import client as boto_client
-from pymongo import MongoClient, ASCENDING
+from pandas.tseries.offsets import BDay
+from pymongo import MongoClient
 from telegram import Bot
 
 from data.tracked_asset import TrackedAsset
@@ -33,8 +37,10 @@ CHAT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_CHAT_ID'))
 MONGO_DECRYPTED = decrypt_kms(
     enc_string=environ.get('MONGO_CONNECTION_STRING'))
 
-alpaca_client = TradingClient(
+alpaca_trading_client = TradingClient(
     api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
+alpaca_historical_client = StockHistoricalDataClient(
+    api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED)
 telegram_bot = Bot(token=BOT_DECRYPTED)
 
 session_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
@@ -51,7 +57,7 @@ def check_announcements() -> None:
     news_request = GetCorporateAnnouncementsRequest(
             ca_types=ca_types, since=today,
             until=(today + timedelta(days=10)))
-    announcements = alpaca_client.get_corporate_annoucements(
+    announcements = alpaca_trading_client.get_corporate_annoucements(
             filter=news_request)
     tracked_symbols = stock_db.list_collection_names()
     for announcement in announcements:
@@ -71,9 +77,15 @@ def check_announcements() -> None:
                     message = 'Split detected! Updating: ' + affected_symbol
                     telegram_bot.send_message(
                         text=message, chat_id=CHAT_DECRYPTED)
-                    perform_split(symbol=affected_symbol,
-                                  old_rate=announcement.old_rate,
-                                  new_rate=announcement.new_rate)
+                    ex_datetime = datetime.combine(
+                        date=announcement.ex_date,
+                        time=datetime.min.time(),
+                        tzinfo=timezone.utc)
+                    perform_split(
+                        symbol=affected_symbol,
+                        old_rate=announcement.old_rate,
+                        new_rate=announcement.new_rate,
+                        ex_datetime=ex_datetime)
             else:  # SPINOFF
                 message = 'Spinoff detected! PANIC: ' + affected_symbol
                 telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
@@ -81,11 +93,12 @@ def check_announcements() -> None:
             sleep(0.5)
 
 
-def is_market_open() -> bool:
+def check_market_open() -> None:
     today_filter = GetCalendarRequest(start=today, end=today)
 
     try:
-        trading_calendar = alpaca_client.get_calendar(filters=today_filter)
+        trading_calendar = alpaca_trading_client.get_calendar(
+            filters=today_filter)
     except AttributeError:
         error_message = 'Error fetching trading calendar! Filter: '
         error_message += repr(today_filter)
@@ -98,44 +111,7 @@ def is_market_open() -> bool:
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         raise CheckMarketError
 
-    return trading_calendar[0].date == today
-
-
-def lambda_handler(event, context):
-    try:
-        market_is_open = is_market_open()
-        update_market_collection(market_is_open)
-        check_announcements()
-    except CheckMarketError:
-        return
-    except Exception as err:
-        error_message = 'Unexpected exception: ' + repr(err)
-        telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
-    finally:
-        mongo_client.close()
-
-
-def perform_split(symbol: str, old_rate: float, new_rate: float) -> None:
-    prices = []
-    dates = []
-    asset_collection = stock_db.get_collection(symbol)
-    asset_cursor = asset_collection.find()
-    # Update all values, assume EX date is today
-    for asset_item in asset_cursor.sort(
-            key_or_list='date', direction=ASCENDING):
-        prices.append(asset_item['close'] * old_rate / new_rate)
-        dates.append(asset_item['date'])
-
-    asset = TrackedAsset(symbol=symbol, date=dates[-1], close=prices[-1])
-    stock_db.drop_collection(name_or_collection=symbol)
-    sleep(0.1)
-    asset.calculate_macd(prices=prices, dates=dates, db_client=mongo_client)
-    asset.calculate_rsi(prices=prices, dates=dates, db_client=mongo_client)
-    asset.calculate_ema_big_long(
-        prices=prices, dates=dates, db_client=mongo_client)
-
-
-def update_market_collection(market_is_open: bool) -> None:
+    market_is_open = trading_calendar[0].date == today
     update_dict = {
         'market_is_open': market_is_open,
         'day_of_month': today.day
@@ -146,6 +122,57 @@ def update_market_collection(market_is_open: bool) -> None:
     market_collection.update_one(
         filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
         update={'$set': update_dict})
+
+
+def lambda_handler(event, context):
+    try:
+        check_market_open()
+        check_announcements()
+    except CheckMarketError:
+        return
+    except Exception as err:
+        error_message = 'Unexpected exception: ' + repr(err)
+        telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
+    finally:
+        mongo_client.close()
+
+
+def perform_split(symbol: str, old_rate: float, new_rate: float,
+                  ex_datetime: datetime) -> None:
+    end_datetime = datetime.combine(date=today, time=datetime.min.time())
+    start_datetime = (today - BDay(310))
+    bars_request = StockBarsRequest(
+        symbol_or_symbols=symbol, start=start_datetime, end=end_datetime,
+        timeframe=TimeFrame.Day)
+    try:
+        bars_response = alpaca_historical_client.get_stock_bars(
+            request_params=bars_request)
+    except AttributeError:
+        message = 'Error fetching data while splitting: ' + symbol
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise CheckMarketError
+
+    stock_db.drop_collection(name_or_collection=symbol)
+    bars = bars_response.data[symbol]
+
+    latest_bar = bars[-1]
+    latest_date = latest_bar.timestamp.replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    asset = TrackedAsset(
+        symbol=symbol, date=latest_date, close=latest_bar.close)
+
+    prices = [candle.close for candle in bars]
+    dates = [candle.timestamp.replace(
+        hour=0, minute=0, second=0, microsecond=0) for candle in bars]
+
+    index = 0
+    while dates[index] < ex_datetime:
+        prices[index] = (prices[index] * old_rate / new_rate)
+        index += 1
+    asset.calculate_macd(prices=prices, dates=dates, db_client=mongo_client)
+    asset.calculate_rsi(prices=prices, dates=dates, db_client=mongo_client)
+    asset.calculate_ema_big_long(
+        prices=prices, dates=dates, db_client=mongo_client)
 
 
 class CheckMarketError(Exception):

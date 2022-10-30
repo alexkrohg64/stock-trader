@@ -55,32 +55,33 @@ def get_stock_splits(
     return result
 
 
-def import_asset(code: str, start_date: datetime,
+def import_asset(symbol: str, start_date: datetime,
                  end_date: datetime) -> bool:
     """Fetch and ingest data for given stock symbol"""
     bars_request = StockBarsRequest(
-        symbol_or_symbols=code, start=start_date, end=end_date,
+        symbol_or_symbols=symbol, start=start_date, end=end_date,
         timeframe=TimeFrame.Day)
     try:
         bars_response = alpaca_historical_client.get_stock_bars(
             request_params=bars_request)
     except AttributeError:
         # A few problematic NASDAQ stocks exist at time of commit
-        print('Swallowing empty response for: ' + code)
+        print('Swallowing empty response for: ' + symbol)
         return False
-    bars = bars_response.data[code]
+    bars = bars_response.data[symbol]
     # skip assets which have not been on the market long enough
     if len(bars) < DATA_POINTS:
         return False
 
     if len(bars) > DATA_POINTS:
         print('Warning - excessive data points detected for '
-              + code + '! Continuing...')
+              + symbol + '! Continuing...')
 
     latest_bar = bars[-1]
     latest_date = latest_bar.timestamp.replace(
         hour=0, minute=0, second=0, microsecond=0)
-    asset = TrackedAsset(symbol=code, date=latest_date, close=latest_bar.close)
+    asset = TrackedAsset(
+        symbol=symbol, date=latest_date, close=latest_bar.close)
 
     if not asset.has_enough_volume(bars):
         return False
@@ -89,16 +90,16 @@ def import_asset(code: str, start_date: datetime,
     dates = [candle.timestamp.replace(
         hour=0, minute=0, second=0, microsecond=0) for candle in bars]
 
-    if code in stock_splits:
-        stock_split = stock_splits[code]
+    if symbol in stock_splits:
+        stock_split = stock_splits[symbol]
         if stock_split.ca_type == CorporateActionType.SPINOFF:
             print('Unable to process SPINOFF events at this time')
-            print('Symbol: ' + code)
+            print('Symbol: ' + symbol)
             return False
         ex_date = stock_split.ex_date
         if ex_date is None:
             print('Unexpected empty EX_DATE for split announcement!')
-            print('Symbol: ' + code)
+            print('Symbol: ' + symbol)
             return False
         ex_datetime = datetime.combine(
             date=ex_date, time=datetime.min.time(), tzinfo=timezone.utc)
@@ -135,7 +136,7 @@ stock_splits = get_stock_splits(start_date=starting_datetime, end_date=today)
 
 for symbol in symbols:
     if not import_asset(
-            code=symbol, start_date=starting_datetime, end_date=today):
+            symbol=symbol, start_date=starting_datetime, end_date=today):
         # API free-rate limit: 200/min
         sleep(0.3)
     else:
