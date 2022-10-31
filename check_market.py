@@ -166,13 +166,13 @@ def perform_split(symbol: str, old_rate: float, new_rate: float,
         hour=0, minute=0, second=0, microsecond=0) for candle in bars]
 
     index = 0
-    while dates[index] < ex_datetime:
+    while index < len(dates) and dates[index] < ex_datetime:
         prices[index] = (prices[index] * old_rate / new_rate)
         index += 1
-    asset.calculate_macd(prices=prices, dates=dates, db_client=mongo_client)
-    asset.calculate_rsi(prices=prices, dates=dates, db_client=mongo_client)
+    asset.calculate_macd(prices=prices, dates=dates, mongo_client=mongo_client)
+    asset.calculate_rsi(prices=prices, dates=dates, mongo_client=mongo_client)
     asset.calculate_ema_big_long(
-        prices=prices, dates=dates, db_client=mongo_client)
+        prices=prices, dates=dates, mongo_client=mongo_client)
 
 
 class CheckMarketError(Exception):

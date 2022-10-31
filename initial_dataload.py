@@ -102,16 +102,16 @@ def import_asset(symbol: str, start_date: datetime,
         ex_datetime = datetime.combine(
             date=ex_date, time=datetime.min.time(), tzinfo=timezone.utc)
         index = 0
-        while dates[index] < ex_datetime:
+        while index < len(dates) and dates[index] < ex_datetime:
             prices[index] = (
                 prices[index]
                 * stock_split.old_rate / stock_split.new_rate)
             index += 1
     # This ordering of methods matters now for DB calls
-    asset.calculate_macd(prices=prices, dates=dates, db_client=mongo_client)
-    asset.calculate_rsi(prices=prices, dates=dates, db_client=mongo_client)
+    asset.calculate_macd(prices=prices, dates=dates, mongo_client=mongo_client)
+    asset.calculate_rsi(prices=prices, dates=dates, mongo_client=mongo_client)
     asset.calculate_ema_big_long(
-        prices=prices, dates=dates, db_client=mongo_client)
+        prices=prices, dates=dates, mongo_client=mongo_client)
     tracked_assets.append(asset)
     return True
 
