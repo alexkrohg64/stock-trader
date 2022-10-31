@@ -1,19 +1,20 @@
 """Analyze data and manage trades"""
 from base64 import b64decode
+from bson.binary import Binary
 from datetime import date
+from math import floor
 from os import environ
 from time import sleep
 from urllib import parse
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderSide, OrderType, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest, StopLossRequest
+from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest
 from boto3 import client as boto_client
 from pymongo import MongoClient
 from telegram import Bot
 
 OPEN_POSITIONS = 10
-STOP_LOSS_PERCENT = 10
 TARGET_PERCENT = 10
 TARGET_RSI = 30
 
@@ -48,7 +49,7 @@ market_db = mongo_client.get_database(name='market')
 market_collection = market_db.get_collection(name='MARKET_DATA')
 market_item = market_collection.find_one()
 today = date.today()
-# Do not buy stocks which just took a loss
+# Do not buy stocks which just sold
 black_list = []
 
 
@@ -118,7 +119,7 @@ def manage_trades() -> None:
         stock_collection = stock_db.get_collection(symbol)
         stock_item = stock_collection.find_one(filter={'date': latest_date})
         # If target not already hit, check for target hit
-        if not held_assets[symbol]:
+        if not held_assets[symbol]['target_met']:
             latest_close = stock_item['close']
             entry_price_str = position.avg_entry_price
             if entry_price_str is None or entry_price_str == '':
@@ -134,10 +135,10 @@ def manage_trades() -> None:
                 telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
                 held_asset_collection.update_one(
                     filter={'my_id': environ.get('HELD_ASSETS_ID')},
-                    update={'$set': {symbol: True}})
-                held_assets[symbol] = True
+                    update={'$set': {symbol: {'target_met': True}}})
+                held_assets[symbol]['target_met'] = True
         # If target has been hit, check for macd crossover
-        if (held_assets[symbol]
+        if (held_assets[symbol]['target_met']
                 and stock_item['macd'] <= stock_item['macd_signal']):
             message = 'Sell signal for : ' + symbol
             message += '. Canceling stop loss order then exiting position.'
@@ -162,19 +163,8 @@ def manage_trades() -> None:
                 raise ManageTradesError
             # Wait for above order to fully cancel
             sleep(2)
-            sell_amount_str = position.market_value
-            if sell_amount_str is None or sell_amount_str == '':
-                message = 'Empty value for market_value! '
-                message += 'Unable to create sell request for: ' + symbol
-                telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-                raise ManageTradesError
-            sell_amount = round(number=float(sell_amount_str), ndigits=2)
-            order_request = MarketOrderRequest(
-                symbol=symbol, notional=sell_amount, side=OrderSide.SELL,
-                type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
             try:
-                alpaca_client.submit_order(
-                    order_data=order_request)
+                alpaca_client.close_position(symbol_or_asset_id=symbol)
             except AttributeError as aerr:
                 err = 'Error submitting sell order for: ' + symbol
                 err += '. Exception: ' + repr(aerr)
@@ -187,9 +177,10 @@ def manage_trades() -> None:
     # Finally calculate buy_amount and place any buy/limit orders
     total_funds = 0
     if len(positions) < OPEN_POSITIONS:
-        total_funds = account.cash / (
+        cash_on_hand = float(account.cash)
+        total_funds = cash_on_hand / (
             (OPEN_POSITIONS - len(positions)) / OPEN_POSITIONS)
-    buy_amount = round(number=(total_funds / OPEN_POSITIONS), ndigits=2)
+    buy_amount = total_funds / OPEN_POSITIONS
     for symbol in stock_db.list_collection_names():
         if symbol in black_list or symbol in position_symbols:
             continue
@@ -204,25 +195,22 @@ def manage_trades() -> None:
                 if filtered_trend:
                     message = 'Buy signal: ' + symbol
                     closing_price = asset['close']
-                    if account.cash < buy_amount:
+                    if buy_amount < closing_price:
+                        message += '. But stock price too high!'
+                        telegram_bot.send_message(
+                            text=message, chat_id=CHAT_DECRYPTED)
+                    elif cash_on_hand < buy_amount:
                         message += '. But not enough money!'
                         telegram_bot.send_message(
                             text=message, chat_id=CHAT_DECRYPTED)
                     else:
-                        stop_loss_price = (
-                            closing_price * ((100 - STOP_LOSS_PERCENT) / 100))
-                        stop_loss_request = StopLossRequest(
-                            time_in_force=TimeInForce.GTC,
-                            stop_price=stop_loss_price
-                        )
+                        buy_quantity = floor(buy_amount / asset['close'])
                         order_request = MarketOrderRequest(
-                            symbol=symbol, notional=buy_amount,
+                            symbol=symbol, qty=buy_quantity,
                             side=OrderSide.BUY, type=OrderType.MARKET,
-                            time_in_force=TimeInForce.DAY,
-                            order_class=OrderClass.OTO,
-                            stop_loss=stop_loss_request)
+                            time_in_force=TimeInForce.DAY)
                         try:
-                            alpaca_client.submit_order(
+                            buy_order = alpaca_client.submit_order(
                                 order_data=order_request)
                         except AttributeError as aerr:
                             err = 'Error submitting buy order for: ' + symbol
@@ -233,9 +221,15 @@ def manage_trades() -> None:
                         message += '. Order successfully placed.'
                         telegram_bot.send_message(
                             text=message, chat_id=CHAT_DECRYPTED)
+                        asset_object = {
+                            symbol: {
+                                'order_id': Binary.from_uuid(
+                                    uuid=buy_order.id)
+                            }
+                        }
                         held_asset_collection.update_one(
                             filter={'my_id': environ.get('HELD_ASSETS_ID')},
-                            update={'$set': {symbol: False}})
+                            update={'$set': asset_object})
 
 
 class ManageTradesError(Exception):
