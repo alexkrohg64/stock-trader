@@ -36,6 +36,7 @@ BOT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_BOT_TOKEN'))
 CHAT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_CHAT_ID'))
 MONGO_DECRYPTED = decrypt_kms(
     enc_string=environ.get('MONGO_CONNECTION_STRING'))
+HELD_ASSETS_ID = environ.get('HELD_ASSETS_ID')
 
 alpaca_client = TradingClient(
     api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=True)
@@ -79,29 +80,28 @@ def lambda_handler(event, context):
 
 
 def manage_trades() -> None:
-    # Fetch available funds, open positions, and open orders
+    # Fetch open positions and orders
     try:
-        account = alpaca_client.get_account()
-        sleep(0.3)
         positions = alpaca_client.get_all_positions()
         sleep(0.3)
         orders = alpaca_client.get_orders()
         sleep(0.3)
-
     except AttributeError:
-        error_message = 'Error fetching trading account!'
+        error_message = 'Error fetching open positions!'
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         raise ManageTradesError
 
     latest_date = market_item['latest_date']
     held_asset_collection = market_db.get_collection(name='HELD_ASSETS')
     held_assets = held_asset_collection.find_one()
+    # Remove ID-related keys
+    del held_assets['_id']
+    del held_assets['my_id']
     position_symbols = [position.symbol for position in positions]
 
     # First sync saved data with active positions
     sold_symbols = [symbol for symbol in held_assets
-                    if symbol not in position_symbols
-                    and symbol not in ['_id', 'my_id']]
+                    if symbol not in position_symbols]
     if sold_symbols:
         message = 'WARNING Stop loss detected for: ' + repr(sold_symbols)
         message += '. Removing from tracked data.'
@@ -109,7 +109,7 @@ def manage_trades() -> None:
         for sold_symbol in sold_symbols:
             del held_assets[sold_symbol]
             held_asset_collection.update_one(
-                filter={'my_id': environ.get('HELD_ASSETS_ID')},
+                filter={'my_id': HELD_ASSETS_ID},
                 update={'$unset': sold_symbol})
             black_list.append(sold_symbol)
 
@@ -134,7 +134,7 @@ def manage_trades() -> None:
                 message += '. latest_close: ' + repr(latest_close)
                 telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
                 held_asset_collection.update_one(
-                    filter={'my_id': environ.get('HELD_ASSETS_ID')},
+                    filter={'my_id': HELD_ASSETS_ID},
                     update={'$set': {symbol: {'target_met': True}}})
                 held_assets[symbol]['target_met'] = True
         # If target has been hit, check for macd crossover
@@ -171,65 +171,90 @@ def manage_trades() -> None:
                 telegram_bot.send_message(
                     text=err, chat_id=CHAT_DECRYPTED)
                 raise ManageTradesError
+            del held_assets[symbol]
+            held_asset_collection.update_one(
+                filter={'my_id': HELD_ASSETS_ID},
+                update={'$unset': symbol})
             # It is given at this point that macd <= macd_signal
             black_list.append(symbol)
-
     # Finally calculate buy_amount and place any buy/limit orders
-    total_funds = 0
-    if len(positions) < OPEN_POSITIONS:
+    if len(held_assets) < OPEN_POSITIONS:
+        try:
+            account = alpaca_client.get_account()
+        except AttributeError:
+            message = 'Error fetching trading account!'
+            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+            raise ManageTradesError
+        sleep(0.3)
         cash_on_hand = float(account.cash)
-        total_funds = cash_on_hand / (
-            (OPEN_POSITIONS - len(positions)) / OPEN_POSITIONS)
-    buy_amount = total_funds / OPEN_POSITIONS
-    for symbol in stock_db.list_collection_names():
-        if symbol in black_list or symbol in position_symbols:
-            continue
-        asset_collection = stock_db.get_collection(symbol)
-        asset = asset_collection.find_one(filter={'date': latest_date})
-        if asset['macd'] > asset['macd_signal']:
-            filtered_rsi = [rsi_value for rsi_value in asset['rsi']
-                            if rsi_value < TARGET_RSI]
-            if filtered_rsi:
-                filtered_trend = [trend_value for trend_value in asset['trend']
-                                  if trend_value]
-                if filtered_trend:
-                    message = 'Buy signal: ' + symbol
-                    closing_price = asset['close']
-                    if buy_amount < closing_price:
-                        message += '. But stock price too high!'
-                        telegram_bot.send_message(
-                            text=message, chat_id=CHAT_DECRYPTED)
-                    elif cash_on_hand < buy_amount:
-                        message += '. But not enough money!'
-                        telegram_bot.send_message(
-                            text=message, chat_id=CHAT_DECRYPTED)
-                    else:
-                        buy_quantity = floor(buy_amount / asset['close'])
-                        order_request = MarketOrderRequest(
-                            symbol=symbol, qty=buy_quantity,
-                            side=OrderSide.BUY, type=OrderType.MARKET,
-                            time_in_force=TimeInForce.DAY)
-                        try:
-                            buy_order = alpaca_client.submit_order(
-                                order_data=order_request)
-                        except AttributeError as aerr:
-                            err = 'Error submitting buy order for: ' + symbol
-                            err += '. Exception: ' + repr(aerr)
+        total_funds = float(account.equity)
+        buy_amount = total_funds / OPEN_POSITIONS
+        num_positions = len(held_assets)
+        for symbol in stock_db.list_collection_names():
+            if num_positions == OPEN_POSITIONS:
+                break
+            if symbol in black_list or symbol in position_symbols:
+                continue
+            asset_collection = stock_db.get_collection(symbol)
+            asset = asset_collection.find_one(filter={'date': latest_date})
+            if asset['macd'] > asset['macd_signal']:
+                filtered_rsi = [rsi_value for rsi_value in asset['rsi']
+                                if rsi_value < TARGET_RSI]
+                if filtered_rsi:
+                    filtered_trend = [
+                        trend_value for trend_value in asset['trend']
+                        if trend_value]
+                    if filtered_trend:
+                        message = 'Buy signal: ' + symbol
+                        closing_price = asset['close']
+                        if buy_amount < closing_price:
+                            message += '. But stock price too high!'
                             telegram_bot.send_message(
-                                text=err, chat_id=CHAT_DECRYPTED)
-                            raise ManageTradesError
-                        message += '. Order successfully placed.'
-                        telegram_bot.send_message(
-                            text=message, chat_id=CHAT_DECRYPTED)
-                        asset_object = {
-                            symbol: {
-                                'order_id': Binary.from_uuid(
-                                    uuid=buy_order.id)
+                                text=message, chat_id=CHAT_DECRYPTED)
+                        elif cash_on_hand < buy_amount:
+                            message += '. But not enough money!'
+                            telegram_bot.send_message(
+                                text=message, chat_id=CHAT_DECRYPTED)
+                        else:
+                            buy_quantity = floor(buy_amount / asset['close'])
+                            order_request = MarketOrderRequest(
+                                symbol=symbol, qty=buy_quantity,
+                                side=OrderSide.BUY, type=OrderType.MARKET,
+                                time_in_force=TimeInForce.DAY)
+                            try:
+                                buy_order = alpaca_client.submit_order(
+                                    order_data=order_request)
+                            except AttributeError as aerr:
+                                err = 'Error submitting buy for: ' + symbol
+                                err += '. Exception: ' + repr(aerr)
+                                telegram_bot.send_message(
+                                    text=err, chat_id=CHAT_DECRYPTED)
+                                raise ManageTradesError
+                            message += '. Order successfully placed.'
+                            telegram_bot.send_message(
+                                text=message, chat_id=CHAT_DECRYPTED)
+                            asset_object = {
+                                symbol: {
+                                    'order_id': Binary.from_uuid(
+                                        uuid=buy_order.id)
+                                }
                             }
-                        }
-                        held_asset_collection.update_one(
-                            filter={'my_id': environ.get('HELD_ASSETS_ID')},
-                            update={'$set': asset_object})
+                            held_asset_collection.update_one(
+                                filter={'my_id': HELD_ASSETS_ID},
+                                update={'$set': asset_object})
+                            # Wait for account cash value to update
+                            sleep(2)
+                            # Update cash_on_hand
+                            try:
+                                account = alpaca_client.get_account()
+                                cash_on_hand = float(account.cash)
+                            except AttributeError:
+                                message = 'Error updating account details!'
+                                telegram_bot.send_message(
+                                    text=message, chat_id=CHAT_DECRYPTED)
+                                raise ManageTradesError
+                            sleep(0.3)
+                            num_positions += 1
 
 
 class ManageTradesError(Exception):
