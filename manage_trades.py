@@ -110,7 +110,7 @@ def manage_trades() -> None:
             del held_assets[sold_symbol]
             held_asset_collection.update_one(
                 filter={'my_id': HELD_ASSETS_ID},
-                update={'$unset': sold_symbol})
+                update={'$unset': {sold_symbol: ''}})
             black_list.append(sold_symbol)
 
     # Second check open positions for target and/or sell signal
@@ -174,7 +174,7 @@ def manage_trades() -> None:
             del held_assets[symbol]
             held_asset_collection.update_one(
                 filter={'my_id': HELD_ASSETS_ID},
-                update={'$unset': symbol})
+                update={'$unset': {symbol: ''}})
             # It is given at this point that macd <= macd_signal
             black_list.append(symbol)
     # Finally calculate buy_amount and place any buy/limit orders
