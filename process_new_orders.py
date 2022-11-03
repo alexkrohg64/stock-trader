@@ -26,16 +26,16 @@ def decrypt_kms(enc_string: str) -> str:
     )['Plaintext'].decode('utf-8')
 
 
-ID_DECRYPTED = decrypt_kms(enc_string=environ.get('PAPER_APCA_API_KEY_ID'))
+ID_DECRYPTED = decrypt_kms(enc_string=environ.get('APCA_API_KEY_ID'))
 KEY_DECRYPTED = decrypt_kms(
-    enc_string=environ.get('PAPER_APCA_API_SECRET_KEY'))
+    enc_string=environ.get('APCA_API_SECRET_KEY'))
 BOT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_BOT_TOKEN'))
 CHAT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_CHAT_ID'))
 MONGO_DECRYPTED = decrypt_kms(
     enc_string=environ.get('MONGO_CONNECTION_STRING'))
 
 alpaca_client = TradingClient(
-    api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=True)
+    api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
 telegram_bot = Bot(token=BOT_DECRYPTED)
 
 session_encoded = parse.quote_plus(environ.get('AWS_SESSION_TOKEN'))
