@@ -196,64 +196,69 @@ def manage_trades() -> None:
                 continue
             asset_collection = stock_db.get_collection(symbol)
             asset = asset_collection.find_one(filter={'date': latest_date})
-            if asset['macd'] > asset['macd_signal']:
-                filtered_rsi = [rsi_value for rsi_value in asset['rsi']
-                                if rsi_value < TARGET_RSI]
-                if filtered_rsi:
-                    filtered_trend = [
-                        trend_value for trend_value in asset['trend']
-                        if trend_value]
-                    if filtered_trend:
-                        message = 'Buy signal: ' + symbol
-                        closing_price = asset['close']
-                        if buy_amount < closing_price:
-                            message += '. But stock price too high!'
-                            telegram_bot.send_message(
-                                text=message, chat_id=CHAT_DECRYPTED)
-                        elif cash_on_hand < buy_amount:
-                            message += '. But not enough money!'
-                            telegram_bot.send_message(
-                                text=message, chat_id=CHAT_DECRYPTED)
-                        else:
-                            buy_quantity = floor(buy_amount / asset['close'])
-                            order_request = MarketOrderRequest(
-                                symbol=symbol, qty=buy_quantity,
-                                side=OrderSide.BUY, type=OrderType.MARKET,
-                                time_in_force=TimeInForce.DAY)
-                            try:
-                                buy_order = alpaca_client.submit_order(
-                                    order_data=order_request)
-                            except AttributeError as aerr:
-                                err = 'Error submitting buy for: ' + symbol
-                                err += '. Exception: ' + repr(aerr)
-                                telegram_bot.send_message(
-                                    text=err, chat_id=CHAT_DECRYPTED)
-                                raise ManageTradesError
-                            message += '. Order successfully placed.'
-                            telegram_bot.send_message(
-                                text=message, chat_id=CHAT_DECRYPTED)
-                            asset_object = {
-                                symbol: {
-                                    'order_id': Binary.from_uuid(
-                                        uuid=buy_order.id)
-                                }
-                            }
-                            held_asset_collection.update_one(
-                                filter={'my_id': HELD_ASSETS_ID},
-                                update={'$set': asset_object})
-                            # Wait for account cash value to update
-                            sleep(2)
-                            # Update cash_on_hand
-                            try:
-                                account = alpaca_client.get_account()
-                                cash_on_hand = float(account.cash)
-                            except AttributeError:
-                                message = 'Error updating account details!'
-                                telegram_bot.send_message(
-                                    text=message, chat_id=CHAT_DECRYPTED)
-                                raise ManageTradesError
-                            sleep(0.3)
-                            num_positions += 1
+
+            if should_buy(asset=asset):
+                message = 'Buy signal: ' + symbol
+                closing_price = asset['close']
+                if buy_amount < closing_price:
+                    message += '. But stock price too high!'
+                    telegram_bot.send_message(
+                        text=message, chat_id=CHAT_DECRYPTED)
+                elif cash_on_hand < buy_amount:
+                    message += '. But not enough money!'
+                    telegram_bot.send_message(
+                        text=message, chat_id=CHAT_DECRYPTED)
+                else:
+                    buy_quantity = floor(buy_amount / asset['close'])
+                    order_request = MarketOrderRequest(
+                        symbol=symbol, qty=buy_quantity, side=OrderSide.BUY,
+                        type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
+                    try:
+                        buy_order = alpaca_client.submit_order(
+                            order_data=order_request)
+                    except AttributeError as aerr:
+                        err = 'Error submitting buy for: ' + symbol
+                        err += '. Exception: ' + repr(aerr)
+                        telegram_bot.send_message(
+                            text=err, chat_id=CHAT_DECRYPTED)
+                        raise ManageTradesError
+                    message += '. Order successfully placed.'
+                    telegram_bot.send_message(
+                        text=message, chat_id=CHAT_DECRYPTED)
+                    asset_object = {
+                        symbol: {
+                            'order_id': Binary.from_uuid(uuid=buy_order.id)
+                        }
+                    }
+                    held_asset_collection.update_one(
+                        filter={'my_id': HELD_ASSETS_ID},
+                        update={'$set': asset_object})
+                    # Wait for account cash value to update
+                    sleep(2)
+                    # Update cash_on_hand
+                    try:
+                        account = alpaca_client.get_account()
+                        cash_on_hand = float(account.cash)
+                    except AttributeError:
+                        message = 'Error updating account details!'
+                        telegram_bot.send_message(
+                            text=message, chat_id=CHAT_DECRYPTED)
+                        raise ManageTradesError
+                    sleep(0.3)
+                    num_positions += 1
+
+
+def should_buy(asset: dict) -> bool:
+    if asset['macd'] > asset['macd_signal']:
+        filtered_rsi = [rsi_value for rsi_value in asset['rsi']
+                        if rsi_value < TARGET_RSI]
+        if filtered_rsi:
+            filtered_trend = [
+                trend_value for trend_value in asset['trend']
+                if trend_value]
+            if filtered_trend:
+                return True
+    return False
 
 
 class ManageTradesError(Exception):
