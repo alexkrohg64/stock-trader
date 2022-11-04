@@ -83,7 +83,7 @@ def process_new_orders() -> None:
         if 'order_id' in held_assets[symbol]:
             try:
                 buy_order = alpaca_client.get_order_by_id(
-                    Binary.as_uuid(held_assets[symbol]['order_id']))
+                    order_id=Binary.as_uuid(held_assets[symbol]['order_id']))
             except AttributeError as aerr:
                 message = 'Error getting buy order for: ' + symbol
                 message += '. Exception: ' + repr(aerr)

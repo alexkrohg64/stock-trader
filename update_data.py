@@ -8,6 +8,8 @@ from urllib import parse
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import AssetStatus
 from boto3 import client as boto_client
 from pymongo import MongoClient
 from telegram import Bot
@@ -32,7 +34,9 @@ CHAT_DECRYPTED = decrypt_kms(enc_string=environ.get('TGM_CHAT_ID'))
 MONGO_DECRYPTED = decrypt_kms(
     enc_string=environ.get('MONGO_CONNECTION_STRING'))
 
-alpaca_client = StockHistoricalDataClient(
+alpaca_trading_client = TradingClient(
+    api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED, paper=False)
+alpaca_historical_client = StockHistoricalDataClient(
     api_key=ID_DECRYPTED, secret_key=KEY_DECRYPTED)
 telegram_bot = Bot(token=BOT_DECRYPTED)
 
@@ -50,21 +54,39 @@ yesterday = datetime.combine(
     tzinfo=timezone.utc)
 
 
-def fetch_prices_and_update(asset: TrackedAsset) -> None:
+def fetch_prices_and_update(asset: TrackedAsset) -> bool:
     asset_symbol = asset.symbol
     bars_request = StockBarsRequest(
         symbol_or_symbols=asset_symbol, start=yesterday, limit=1,
         timeframe=TimeFrame.Day)
 
     try:
-        bars_response = alpaca_client.get_stock_bars(
+        bars_response = alpaca_historical_client.get_stock_bars(
             request_params=bars_request)
-    except AttributeError:
-        message = 'Error fetching data from API for: ' + asset_symbol
-        message += '. Abort. Request: ' + repr(bars_request)
-        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-        raise UpdateDataError
-
+    except AttributeError as aerr:
+        sleep(0.3)
+        # Check if asset has become inactive
+        try:
+            asset_response = alpaca_trading_client.get_asset(
+                symbol_or_asset_id=asset_symbol
+            )
+            sleep(0.3)
+            if asset_response.status == AssetStatus.INACTIVE:
+                message = 'WARNING asset has become inactive: ' + asset_symbol
+                message += '. Removing from tracked data...'
+                telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+                return False
+            else:
+                message = 'Error fetching data from API for: ' + asset_symbol
+                message += '. Abort. Error: ' + repr(aerr)
+                telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+                raise UpdateDataError
+        except AttributeError as inner_aerr:
+            message = 'Inner exception checking for asset: ' + asset_symbol
+            message += '. Abort. Error: ' + repr(inner_aerr)
+            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+            raise UpdateDataError
+    sleep(0.3)
     bars = bars_response.data[asset_symbol]
 
     if len(bars) != 1:
@@ -92,6 +114,7 @@ def fetch_prices_and_update(asset: TrackedAsset) -> None:
         raise UpdateDataError
 
     asset.update_stats(new_price=candle.close, new_date=yesterday)
+    return True
 
 
 def get_market_date() -> datetime:
@@ -134,6 +157,7 @@ def lambda_handler(event, context):
 def process_stocks(asset_date: datetime) -> None:
     # Gather most recent records for each symbol
     stock_db = mongo_client.get_database(name='stocks')
+    inactive_stocks = []
     for asset_collection_name in stock_db.list_collection_names():
         asset_collection = stock_db.get_collection(asset_collection_name)
         asset_item = asset_collection.find_one(filter={'date': asset_date})
@@ -147,7 +171,9 @@ def process_stocks(asset_date: datetime) -> None:
             average_losses=asset_item['average_losses'], rsi=asset_item['rsi'],
             ema_big_long=asset_item['ema_big_long'], trend=asset_item['trend'])
 
-        fetch_prices_and_update(asset)
+        if not fetch_prices_and_update(asset):
+            inactive_stocks.append(asset_collection_name)
+            continue
 
         # Incrementally update DB
         new_document = {
@@ -165,8 +191,9 @@ def process_stocks(asset_date: datetime) -> None:
             'trend': asset.trend
         }
         asset_collection.insert_one(document=new_document)
-        # API free-rate limit: 200/min
-        sleep(0.3)
+
+    for inactive_stock in inactive_stocks:
+        stock_db.drop_collection(name_or_collection=inactive_stock)
 
 
 class UpdateDataError(Exception):
