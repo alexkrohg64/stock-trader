@@ -14,7 +14,7 @@ from boto3 import client as boto_client
 from pymongo import MongoClient
 from telegram import Bot
 
-OPEN_POSITIONS = 10
+MAX_OPEN_POSITIONS = 10
 TARGET_PERCENT = 10
 TARGET_RSI = 30
 
@@ -48,10 +48,99 @@ mongo_client = MongoClient(mongo_connection_string)
 stock_db = mongo_client.get_database(name='stocks')
 market_db = mongo_client.get_database(name='market')
 market_collection = market_db.get_collection(name='MARKET_DATA')
+held_asset_collection = market_db.get_collection(name='HELD_ASSETS')
 market_item = market_collection.find_one()
 today = date.today()
 # Do not buy stocks which just sold
 black_list = []
+
+
+def execute_buy(buy_signals: dict[str, float], num_positions: int) -> None:
+    if (num_positions + len(buy_signals)) > MAX_OPEN_POSITIONS:
+        buy_signals = dict(sorted(
+            buy_signals.items(), key=lambda item: item[1]))
+
+    message = 'Buy signal: ' + repr(buy_signals.keys())
+    try:
+        account = alpaca_client.get_account()
+    except AttributeError:
+        message = 'Error fetching trading account!'
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise ManageTradesError
+    sleep(0.3)
+    cash_on_hand = float(account.cash)
+    buy_amount = cash_on_hand / (MAX_OPEN_POSITIONS - num_positions)
+    for symbol, closing_price in buy_signals.items():
+        if num_positions == MAX_OPEN_POSITIONS:
+            message += '. WARNING max positions reached, stop buying'
+            break
+        if buy_amount < closing_price:
+            message += '. But stock price too high for: ' + symbol
+        else:
+            buy_quantity = floor(buy_amount / closing_price)
+            order_request = MarketOrderRequest(
+                symbol=symbol, qty=buy_quantity, side=OrderSide.BUY,
+                type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
+            try:
+                buy_order = alpaca_client.submit_order(
+                    order_data=order_request)
+            except AttributeError as aerr:
+                err = 'Error submitting buy for: ' + symbol
+                err += '. Exception: ' + repr(aerr)
+                telegram_bot.send_message(text=err, chat_id=CHAT_DECRYPTED)
+                raise ManageTradesError
+            sleep(0.3)
+            asset_object = {
+                symbol: {
+                    'order_id': Binary.from_uuid(uuid=buy_order.id)
+                }
+            }
+            held_asset_collection.update_one(
+                filter={'my_id': HELD_ASSETS_ID},
+                update={'$set': asset_object})
+            num_positions += 1
+    message += '. Orders successfully placed.'
+    telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+
+
+def execute_sell(symbol: str) -> None:
+    # Fetch open orders
+    try:
+        orders = alpaca_client.get_orders()
+    except AttributeError:
+        message = 'Error fetching open orders!'
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise ManageTradesError
+    sleep(0.3)
+    message = 'Sell signal for : ' + symbol
+    message += '. Canceling stop loss order then exiting position.'
+    telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+    current_orders = [order for order in orders
+                      if order.symbol == symbol]
+    if len(current_orders) != 1:
+        sleep(0.1)
+        message = 'Unexpected amount of open orders for: ' + symbol
+        message += '. INVESTIGATE IMMEDIATELY.'
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise ManageTradesError
+    stop_loss_order = current_orders[0]
+    try:
+        alpaca_client.cancel_order_by_id(
+            order_id=stop_loss_order.id)
+    except AttributeError as aerr:
+        message = 'Error canceling sell order for: ' + symbol
+        message += '. Exception: ' + repr(aerr)
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise ManageTradesError
+    # Wait for above order to fully cancel
+    sleep(2)
+    try:
+        alpaca_client.close_position(symbol_or_asset_id=symbol)
+    except AttributeError as aerr:
+        message = 'Error submitting sell order for: ' + symbol
+        message += '. Exception: ' + repr(aerr)
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise ManageTradesError
 
 
 def is_market_open() -> bool:
@@ -80,19 +169,15 @@ def lambda_handler(event, context):
 
 
 def manage_trades() -> None:
-    # Fetch open positions and orders
+    # Fetch open positions
     try:
         positions = alpaca_client.get_all_positions()
-        sleep(0.3)
-        orders = alpaca_client.get_orders()
-        sleep(0.3)
     except AttributeError:
         error_message = 'Error fetching open positions!'
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         raise ManageTradesError
-
+    sleep(0.3)
     latest_date = market_item['latest_date']
-    held_asset_collection = market_db.get_collection(name='HELD_ASSETS')
     held_assets = held_asset_collection.find_one()
     # Remove ID-related keys
     del held_assets['_id']
@@ -104,7 +189,7 @@ def manage_trades() -> None:
                     if symbol not in position_symbols]
     if sold_symbols:
         message = 'WARNING Stop loss detected for: ' + repr(sold_symbols)
-        message += '. Removing from tracked data.'
+        message += '. Removing from tracked positions.'
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
         for sold_symbol in sold_symbols:
             del held_assets[sold_symbol]
@@ -140,112 +225,28 @@ def manage_trades() -> None:
         # If target has been hit, check for macd crossover
         if (held_assets[symbol]['target_met']
                 and stock_item['macd'] <= stock_item['macd_signal']):
-            message = 'Sell signal for : ' + symbol
-            message += '. Canceling stop loss order then exiting position.'
-            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-            current_orders = [order for order in orders
-                              if order.symbol == symbol]
-            if len(current_orders) != 1:
-                sleep(0.1)
-                message = 'Unexpected amount of open orders for: ' + symbol
-                message += '. INVESTIGATE IMMEDIATELY.'
-                telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-                raise ManageTradesError
-            stop_loss_order = current_orders[0]
-            try:
-                alpaca_client.cancel_order_by_id(
-                    order_id=stop_loss_order.id)
-            except AttributeError as aerr:
-                err = 'Error canceling sell order for: ' + symbol
-                err += '. Exception: ' + repr(aerr)
-                telegram_bot.send_message(
-                    text=err, chat_id=CHAT_DECRYPTED)
-                raise ManageTradesError
-            # Wait for above order to fully cancel
-            sleep(2)
-            try:
-                alpaca_client.close_position(symbol_or_asset_id=symbol)
-            except AttributeError as aerr:
-                err = 'Error submitting sell order for: ' + symbol
-                err += '. Exception: ' + repr(aerr)
-                telegram_bot.send_message(
-                    text=err, chat_id=CHAT_DECRYPTED)
-                raise ManageTradesError
+            execute_sell(symbol=symbol)
             del held_assets[symbol]
             held_asset_collection.update_one(
                 filter={'my_id': HELD_ASSETS_ID},
                 update={'$unset': {symbol: ''}})
             # It is given at this point that macd <= macd_signal
             black_list.append(symbol)
-    # Finally calculate buy_amount and place any buy/limit orders
-    if len(held_assets) < OPEN_POSITIONS:
-        try:
-            account = alpaca_client.get_account()
-        except AttributeError:
-            message = 'Error fetching trading account!'
-            telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-            raise ManageTradesError
-        sleep(0.3)
-        cash_on_hand = float(account.cash)
-        buy_amount = cash_on_hand / (OPEN_POSITIONS - len(held_assets))
-        num_positions = len(held_assets)
+
+    # Finally determine buy signals and place buy orders
+    if len(held_assets) < MAX_OPEN_POSITIONS:
+        buy_signals = {}
         for symbol in stock_db.list_collection_names():
-            if num_positions == OPEN_POSITIONS:
-                break
             if symbol in black_list or symbol in position_symbols:
                 continue
             asset_collection = stock_db.get_collection(symbol)
             asset = asset_collection.find_one(filter={'date': latest_date})
 
             if should_buy(asset=asset):
-                message = 'Buy signal: ' + symbol
-                closing_price = asset['close']
-                if buy_amount < closing_price:
-                    message += '. But stock price too high!'
-                    telegram_bot.send_message(
-                        text=message, chat_id=CHAT_DECRYPTED)
-                elif cash_on_hand < buy_amount:
-                    message += '. But not enough money!'
-                    telegram_bot.send_message(
-                        text=message, chat_id=CHAT_DECRYPTED)
-                else:
-                    buy_quantity = floor(buy_amount / asset['close'])
-                    order_request = MarketOrderRequest(
-                        symbol=symbol, qty=buy_quantity, side=OrderSide.BUY,
-                        type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
-                    try:
-                        buy_order = alpaca_client.submit_order(
-                            order_data=order_request)
-                    except AttributeError as aerr:
-                        err = 'Error submitting buy for: ' + symbol
-                        err += '. Exception: ' + repr(aerr)
-                        telegram_bot.send_message(
-                            text=err, chat_id=CHAT_DECRYPTED)
-                        raise ManageTradesError
-                    message += '. Order successfully placed.'
-                    telegram_bot.send_message(
-                        text=message, chat_id=CHAT_DECRYPTED)
-                    asset_object = {
-                        symbol: {
-                            'order_id': Binary.from_uuid(uuid=buy_order.id)
-                        }
-                    }
-                    held_asset_collection.update_one(
-                        filter={'my_id': HELD_ASSETS_ID},
-                        update={'$set': asset_object})
-                    # Wait for account cash value to update
-                    sleep(2)
-                    # Update cash_on_hand
-                    try:
-                        account = alpaca_client.get_account()
-                        cash_on_hand = float(account.cash)
-                    except AttributeError:
-                        message = 'Error updating account details!'
-                        telegram_bot.send_message(
-                            text=message, chat_id=CHAT_DECRYPTED)
-                        raise ManageTradesError
-                    sleep(0.3)
-                    num_positions += 1
+                buy_signals[symbol] = asset['close']
+        if buy_signals:
+            execute_buy(
+                buy_signals=buy_signals, num_positions=len(held_assets))
 
 
 def should_buy(asset: dict) -> bool:
