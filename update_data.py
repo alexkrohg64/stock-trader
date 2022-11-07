@@ -1,6 +1,6 @@
 """Update technical analysis data"""
 from base64 import b64decode
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from os import environ
 from time import sleep
 from urllib import parse
@@ -47,17 +47,15 @@ mongo_client = MongoClient(mongo_connection_string)
 market_db = mongo_client.get_database(name='market')
 market_collection = market_db.get_collection(name='MARKET_DATA')
 
-yesterday_date = date.today() - timedelta(days=1)
-# Convert date to datetime
-yesterday = datetime.combine(
-    date=yesterday_date, time=datetime.min.time(),
+today = datetime.combine(
+    date=date.today(), time=datetime.min.time(),
     tzinfo=timezone.utc)
 
 
 def fetch_prices_and_update(asset: TrackedAsset) -> bool:
     asset_symbol = asset.symbol
     bars_request = StockBarsRequest(
-        symbol_or_symbols=asset_symbol, start=yesterday, limit=1,
+        symbol_or_symbols=asset_symbol, start=today, limit=1,
         timeframe=TimeFrame.Day)
 
     try:
@@ -99,9 +97,9 @@ def fetch_prices_and_update(asset: TrackedAsset) -> bool:
     date_of_candle = candle.timestamp.replace(
         hour=0, minute=0, second=0, microsecond=0)
 
-    if date_of_candle != yesterday:
+    if date_of_candle != today:
         message = 'Error while updating: ' + asset_symbol
-        message += '. Expected date: ' + repr(yesterday)
+        message += '. Expected date: ' + repr(today)
         message += '. Date of data returned: ' + repr(date_of_candle)
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
         raise UpdateDataError
@@ -113,7 +111,7 @@ def fetch_prices_and_update(asset: TrackedAsset) -> bool:
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
         raise UpdateDataError
 
-    asset.update_stats(new_price=candle.close, new_date=yesterday)
+    asset.update_stats(new_price=candle.close, new_date=today)
     return True
 
 
@@ -121,10 +119,10 @@ def get_market_date() -> datetime:
     """Return latest tracked date, or None if market was not open yesterday"""
     # Ensure data is in sync
     market_item = market_collection.find_one()
-    if market_item['day_of_month'] != yesterday.day:
+    if market_item['day_of_month'] != today.day:
         error_message = 'Dates do not match up! '
         error_message += 'DB day: ' + repr(market_item['day_of_month'])
-        error_message += '. Yesterday day: ' + repr(yesterday.day)
+        error_message += '. Yesterday day: ' + repr(today.day)
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         raise UpdateDataError
 
@@ -144,7 +142,7 @@ def lambda_handler(event, context):
             # Update overall latest_date tracker
             market_collection.update_one(
                 filter={'my_id': environ.get('MARKET_COLLECTION_ID')},
-                update={'$set': {'latest_date': yesterday}})
+                update={'$set': {'latest_date': today}})
     except UpdateDataError:
         return
     except Exception as err:
