@@ -157,7 +157,7 @@ def process_stocks(asset_date: datetime) -> None:
     stock_db = mongo_client.get_database(name='stocks')
     inactive_stocks = []
     for asset_collection_name in stock_db.list_collection_names():
-        asset_collection = stock_db.get_collection(asset_collection_name)
+        asset_collection = stock_db.get_collection(name=asset_collection_name)
         asset_item = asset_collection.find_one(filter={'date': asset_date})
 
         asset = TrackedAsset(
@@ -169,7 +169,7 @@ def process_stocks(asset_date: datetime) -> None:
             average_losses=asset_item['average_losses'], rsi=asset_item['rsi'],
             ema_big_long=asset_item['ema_big_long'], trend=asset_item['trend'])
 
-        if not fetch_prices_and_update(asset):
+        if not fetch_prices_and_update(asset=asset):
             inactive_stocks.append(asset_collection_name)
             continue
 

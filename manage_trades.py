@@ -201,7 +201,7 @@ def manage_trades() -> None:
     # Second check open positions for target and/or sell signal
     for position in positions:
         symbol = position.symbol
-        stock_collection = stock_db.get_collection(symbol)
+        stock_collection = stock_db.get_collection(name=symbol)
         stock_item = stock_collection.find_one(filter={'date': latest_date})
         # If target not already hit, check for target hit
         if not held_assets[symbol]['target_met']:

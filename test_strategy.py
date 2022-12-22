@@ -21,7 +21,7 @@ end_date = datetime.now() - timedelta(days=1)
 
 print('START - $' + repr(funds))
 for symbol in mongo_db.list_collection_names():
-    asset_collection = mongo_db.get_collection(symbol)
+    asset_collection = mongo_db.get_collection(name=symbol)
     asset_cursor = asset_collection.find()
     for asset in asset_cursor.sort(key_or_list='date', direction=ASCENDING):
         if start_date is None:
