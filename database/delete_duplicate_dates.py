@@ -1,3 +1,4 @@
+"""Traverse stock DB and delete duplicate data"""
 from os import environ
 
 from pymongo import MongoClient

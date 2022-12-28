@@ -16,7 +16,6 @@ portfolio = {}
 
 mongo_client = MongoClient(environ.get('MONGO_CONNECTION_STRING'))
 mongo_db = mongo_client.get_database(name='stocks')
-start_date = None
 end_date = datetime.now() - timedelta(days=1)
 
 print('START - $' + repr(funds))
@@ -24,8 +23,6 @@ for symbol in mongo_db.list_collection_names():
     asset_collection = mongo_db.get_collection(name=symbol)
     asset_cursor = asset_collection.find()
     for asset in asset_cursor.sort(key_or_list='date', direction=ASCENDING):
-        if start_date is None:
-            start_date = asset['date']
         close = asset['close']
 
         # If already owned, check for sell
@@ -78,8 +75,6 @@ trades = alpaca_client.get_stock_latest_trade(request_params=trades_request)
 
 for symbol in portfolio:
     funds += (trades[symbol].price * portfolio[symbol][1])
-total_days = (end_date - start_date).days
 print('FINISH - $' + repr(funds))
-print('Total time passed: ' + repr(total_days) + ' days')
 print('ROI: ' + repr((funds - 10000) / 10000 * 100) + '%')
 mongo_client.close()

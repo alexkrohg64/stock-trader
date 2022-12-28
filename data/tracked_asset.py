@@ -5,7 +5,7 @@ from typing import Any
 from pymongo import MongoClient
 
 EMA_BIG_LONG_PERIOD = 200
-DATA_FRONT_LOAD = 50
+INITIAL_DATA_POINTS = 250
 MACD_LONG_PERIOD = 26
 MACD_SHORT_PERIOD = 12
 MACD_SIGNAL_PERIOD = 9
@@ -63,9 +63,9 @@ class TrackedAsset:
         for i in range(EMA_BIG_LONG_PERIOD, len(prices)):
             self.ema_big_long = ((prices[i] - self.ema_big_long) * SMOOTH_200
                                  + self.ema_big_long)
-            if i > len(prices) - DATA_FRONT_LOAD - TREND_QUEUE - 1:
+            if i >= INITIAL_DATA_POINTS - TREND_QUEUE:
                 self.trend.append(prices[i] > self.ema_big_long)
-                if i > len(prices) - DATA_FRONT_LOAD - 1:
+                if i >= INITIAL_DATA_POINTS:
                     self.trend.pop(0)
                     update = {
                         '$set': {
@@ -106,7 +106,7 @@ class TrackedAsset:
                                        - self.macd_signal)
                                     + self.macd_signal)
 
-            if i >= len(prices) - DATA_FRONT_LOAD:
+            if i >= INITIAL_DATA_POINTS:
                 new_doc = {
                     'symbol': self.symbol,
                     'date': dates[i],
@@ -143,11 +143,11 @@ class TrackedAsset:
             change = prices[i+1] - prices[i]
             self.update_gains_and_losses(change)
 
-            if i > (len(prices) - DATA_FRONT_LOAD - RSI_QUEUE - 2):
+            if i >= (INITIAL_DATA_POINTS - RSI_QUEUE - 1):
                 rsi_value = 100 - 100 / (
                     1 + self.average_gains / self.average_losses)
                 self.rsi.append(rsi_value)
-                if i > (len(prices) - DATA_FRONT_LOAD - 2):
+                if i >= (INITIAL_DATA_POINTS - 1):
                     self.rsi.pop(0)
                     update = {
                         '$set': {
@@ -162,8 +162,10 @@ class TrackedAsset:
                         mongo_client=mongo_client)
 
     @staticmethod
-    def has_enough_volume(bars: list[Any]) -> bool:
-        """Check if average daily volume meets configured threshold"""
+    def has_enough_trades(bars: list[Any]) -> bool:
+        """Check if trade data meets volume and timeframe thresholds"""
+        if (len(bars) <= INITIAL_DATA_POINTS):
+            return False
         volumes = [candle.volume for candle in bars]
         # Do not consider any assets that left the market for any time
         if 0 in volumes:
