@@ -51,59 +51,11 @@ market_collection = market_db.get_collection(name='MARKET_DATA')
 held_asset_collection = market_db.get_collection(name='HELD_ASSETS')
 market_item = market_collection.find_one()
 today = date.today()
-# Do not buy stocks which just sold
+# Do not buy stocks which just exited
 black_list = []
 
 
-def execute_buy(buy_signals: dict[str, float], num_positions: int) -> None:
-    if (num_positions + len(buy_signals)) > MAX_OPEN_POSITIONS:
-        buy_signals = dict(sorted(
-            buy_signals.items(), key=lambda item: item[1]))
-
-    message = 'Buy signal: ' + repr(buy_signals.keys())
-    try:
-        account = alpaca_client.get_account()
-    except AttributeError:
-        message = 'Error fetching trading account!'
-        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-        raise ManageTradesError
-    sleep(0.3)
-    cash_on_hand = float(account.cash)
-    buy_amount = cash_on_hand / (MAX_OPEN_POSITIONS - num_positions)
-    for symbol, closing_price in buy_signals.items():
-        if num_positions == MAX_OPEN_POSITIONS:
-            message += '. WARNING max positions reached, stop buying'
-            break
-        if buy_amount < closing_price:
-            message += '. But stock price too high for: ' + symbol
-        else:
-            buy_quantity = floor(buy_amount / closing_price)
-            order_request = MarketOrderRequest(
-                symbol=symbol, qty=buy_quantity, side=OrderSide.BUY,
-                type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
-            try:
-                buy_order = alpaca_client.submit_order(
-                    order_data=order_request)
-            except AttributeError as aerr:
-                err = 'Error submitting buy for: ' + symbol
-                err += '. Exception: ' + repr(aerr)
-                telegram_bot.send_message(text=err, chat_id=CHAT_DECRYPTED)
-                raise ManageTradesError
-            sleep(0.3)
-            asset_object = {
-                symbol: {
-                    'order_id': Binary.from_uuid(uuid=buy_order.id)
-                }
-            }
-            held_asset_collection.update_one(
-                filter={'my_id': HELD_ASSETS_ID},
-                update={'$set': asset_object})
-            num_positions += 1
-    message += '. Orders successfully placed.'
-    telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-
-
-def execute_sell(symbol: str) -> None:
+def close_position(symbol: str) -> None:
     # Fetch open orders
     try:
         orders = alpaca_client.get_orders()
@@ -112,7 +64,7 @@ def execute_sell(symbol: str) -> None:
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
         raise ManageTradesError
     sleep(0.3)
-    message = 'Sell signal for : ' + symbol
+    message = 'Exit signal for : ' + symbol
     message += '. Canceling stop loss order then exiting position.'
     telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
     current_orders = [order for order in orders
@@ -128,7 +80,7 @@ def execute_sell(symbol: str) -> None:
         alpaca_client.cancel_order_by_id(
             order_id=stop_loss_order.id)
     except AttributeError as aerr:
-        message = 'Error canceling sell order for: ' + symbol
+        message = 'Error canceling stop loss order for: ' + symbol
         message += '. Exception: ' + repr(aerr)
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
         raise ManageTradesError
@@ -137,10 +89,79 @@ def execute_sell(symbol: str) -> None:
     try:
         alpaca_client.close_position(symbol_or_asset_id=symbol)
     except AttributeError as aerr:
-        message = 'Error submitting sell order for: ' + symbol
+        message = 'Error submitting exit order for: ' + symbol
         message += '. Exception: ' + repr(aerr)
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
         raise ManageTradesError
+
+
+def execute_entry_orders(
+        signals: dict[str, float], num_positions: int, is_long: bool) -> int:
+    if (num_positions + len(signals)) > MAX_OPEN_POSITIONS:
+        signals = dict(sorted(
+            signals.items(), key=lambda item: item[1]))
+
+    message = 'Buy signal: ' + repr(signals.keys())
+    try:
+        account = alpaca_client.get_account()
+    except AttributeError:
+        message = 'Error fetching trading account!'
+        telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+        raise ManageTradesError
+    sleep(0.3)
+    cash_on_hand = float(account.equity)
+    txn_amount = cash_on_hand / (MAX_OPEN_POSITIONS - num_positions)
+    message += '. ' + str(txn_amount)
+    for symbol, closing_price in signals.items():
+        if num_positions == MAX_OPEN_POSITIONS:
+            message += '. WARNING max positions reached, stop buying'
+            break
+        if txn_amount < closing_price:
+            message += '. But stock price too high for: ' + symbol
+        else:
+            txn_quantity = floor(txn_amount / closing_price)
+            if is_long:
+                order_request = MarketOrderRequest(
+                    symbol=symbol, qty=txn_quantity, side=OrderSide.BUY,
+                    type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
+            else:
+                try:
+                    asset = alpaca_client.get_asset(symbol_or_asset_id=symbol)
+                except AttributeError as aerr:
+                    err = 'Error checking shortable for: ' + symbol
+                    err += '. Exception: ' + repr(aerr)
+                    telegram_bot.send_message(text=err, chat_id=CHAT_DECRYPTED)
+                    raise ManageTradesError
+                sleep(0.3)
+                if asset.shortable and asset.easy_to_borrow:
+                    order_request = MarketOrderRequest(
+                        symbol=symbol, qty=txn_quantity, side=OrderSide.SELL,
+                        type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
+                else:
+                    message += '. Not shortable: ' + symbol
+                    continue
+            try:
+                order = alpaca_client.submit_order(
+                    order_data=order_request)
+            except AttributeError as aerr:
+                err = 'Error submitting order for: ' + symbol
+                err += '. Exception: ' + repr(aerr)
+                telegram_bot.send_message(text=err, chat_id=CHAT_DECRYPTED)
+                raise ManageTradesError
+            sleep(0.3)
+            asset_object = {
+                symbol: {
+                    'order_id': Binary.from_uuid(uuid=order.id),
+                    'is_long': is_long
+                }
+            }
+            held_asset_collection.update_one(
+                filter={'my_id': HELD_ASSETS_ID},
+                update={'$set': asset_object})
+            num_positions += 1
+    message += '. Orders successfully placed.'
+    telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+    return num_positions
 
 
 def is_market_open() -> bool:
@@ -185,24 +206,26 @@ def manage_trades() -> None:
     position_symbols = [position.symbol for position in positions]
 
     # First sync saved data with active positions
-    sold_symbols = [symbol for symbol in held_assets
-                    if symbol not in position_symbols]
-    if sold_symbols:
-        message = 'WARNING Stop loss detected for: ' + repr(sold_symbols)
+    exited_symbols = [symbol for symbol in held_assets
+                      if symbol not in position_symbols]
+    if exited_symbols:
+        message = 'WARNING Stop loss detected for: ' + repr(exited_symbols)
         message += '. Removing from tracked positions.'
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
-        for sold_symbol in sold_symbols:
-            del held_assets[sold_symbol]
+        for exited_symbol in exited_symbols:
+            del held_assets[exited_symbol]
             held_asset_collection.update_one(
                 filter={'my_id': HELD_ASSETS_ID},
-                update={'$unset': {sold_symbol: ''}})
-            black_list.append(sold_symbol)
+                update={'$unset': {exited_symbol: ''}})
+            black_list.append(exited_symbol)
 
-    # Second check open positions for target and/or sell signal
+    # Second check open positions for target and/or exit signal
     for position in positions:
         symbol = position.symbol
         stock_collection = stock_db.get_collection(name=symbol)
         stock_item = stock_collection.find_one(filter={'date': latest_date})
+        is_long = held_assets[symbol]['is_long']
+        macd_bigger = stock_item['macd'] > stock_item['macd_signal']
         # If target not already hit, check for target hit
         if not held_assets[symbol]['target_met']:
             latest_close = stock_item['close']
@@ -213,43 +236,80 @@ def manage_trades() -> None:
                 telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
                 raise ManageTradesError
             entry_price = float(entry_price_str)
-            if latest_close >= (entry_price * ((100 + TARGET_PERCENT) / 100)):
-                message = 'Target reached for: ' + symbol
-                message += '. entry_price: ' + repr(entry_price)
-                message += '. latest_close: ' + repr(latest_close)
-                telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
+            # Long
+            if is_long:
+                if latest_close >= (
+                        entry_price * ((100 + TARGET_PERCENT) / 100)):
+                    message = 'Target reached for long: ' + symbol
+                    message += '. entry_price: ' + repr(entry_price)
+                    message += '. latest_close: ' + repr(latest_close)
+                    telegram_bot.send_message(
+                        text=message, chat_id=CHAT_DECRYPTED)
+                    held_asset_collection.update_one(
+                        filter={'my_id': HELD_ASSETS_ID},
+                        update={'$set': {symbol: {'target_met': True}}})
+                    held_assets[symbol]['target_met'] = True
+            # Short
+            else:
+                if latest_close <= (
+                        entry_price * ((100 - TARGET_PERCENT) / 100)):
+                    message = 'Target reached for short: ' + symbol
+                    message += '. entry_price: ' + repr(entry_price)
+                    message += '. latest_close: ' + repr(latest_close)
+                    telegram_bot.send_message(
+                        text=message, chat_id=CHAT_DECRYPTED)
+                    held_asset_collection.update_one(
+                        filter={'my_id': HELD_ASSETS_ID},
+                        update={'$set': {symbol: {'target_met': True}}})
+                    held_assets[symbol]['target_met'] = True
+        # If target has been hit, check for macd crossover
+        if held_assets[symbol]['target_met']:
+            if ((is_long and not macd_bigger) or
+                    (not is_long and macd_bigger)):
+                close_position(symbol=symbol)
+                del held_assets[symbol]
                 held_asset_collection.update_one(
                     filter={'my_id': HELD_ASSETS_ID},
-                    update={'$set': {symbol: {'target_met': True}}})
-                held_assets[symbol]['target_met'] = True
-        # If target has been hit, check for macd crossover
-        if (held_assets[symbol]['target_met']
-                and stock_item['macd'] <= stock_item['macd_signal']):
-            execute_sell(symbol=symbol)
-            del held_assets[symbol]
-            held_asset_collection.update_one(
-                filter={'my_id': HELD_ASSETS_ID},
-                update={'$unset': {symbol: ''}})
-            # It is given at this point that macd <= macd_signal
-            black_list.append(symbol)
+                    update={'$unset': {symbol: ''}})
+                black_list.append(symbol)
 
-    # Finally determine buy signals and place buy orders
+    # Determine long signals and place buy orders
+    position_tracker = len(held_assets)
     if len(held_assets) < MAX_OPEN_POSITIONS:
-        buy_signals = {}
+        long_signals = {}
         for symbol in stock_db.list_collection_names():
             if symbol in black_list or symbol in position_symbols:
                 continue
             asset_collection = stock_db.get_collection(symbol)
             asset = asset_collection.find_one(filter={'date': latest_date})
 
-            if should_buy(asset=asset):
-                buy_signals[symbol] = asset['close']
-        if buy_signals:
-            execute_buy(
-                buy_signals=buy_signals, num_positions=len(held_assets))
+            if should_buy_long(asset=asset):
+                long_signals[symbol] = asset['close']
+        if long_signals:
+            position_tracker = execute_entry_orders(
+                signals=long_signals,
+                num_positions=position_tracker,
+                is_long=True)
+    return
+    # Determine short signals and place sell orders
+    if position_tracker < MAX_OPEN_POSITIONS:
+        short_signals = {}
+        for symbol in stock_db.list_collection_names():
+            if symbol in black_list or symbol in position_symbols:
+                continue
+            asset_collection = stock_db.get_collection(symbol)
+            asset = asset_collection.find_one(filter={'date': latest_date})
+
+            if should_sell_short(asset=asset):
+                short_signals[symbol] = asset['close']
+        if short_signals:
+            execute_entry_orders(
+                signals=short_signals,
+                num_positions=position_tracker,
+                is_long=False)
 
 
-def should_buy(asset: dict) -> bool:
+def should_buy_long(asset: dict) -> bool:
     if asset['macd'] > asset['macd_signal']:
         filtered_rsi = [rsi_value for rsi_value in asset['rsi']
                         if rsi_value < TARGET_RSI]
@@ -257,6 +317,19 @@ def should_buy(asset: dict) -> bool:
             filtered_trend = [
                 trend_value for trend_value in asset['trend']
                 if trend_value]
+            if filtered_trend:
+                return True
+    return False
+
+
+def should_sell_short(asset: dict) -> bool:
+    if asset['macd'] < asset['macd_signal']:
+        filtered_rsi = [rsi_value for rsi_value in asset['rsi']
+                        if rsi_value > (100 - TARGET_RSI)]
+        if filtered_rsi:
+            filtered_trend = [
+                trend_value for trend_value in asset['trend']
+                if not trend_value]
             if filtered_trend:
                 return True
     return False

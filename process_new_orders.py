@@ -82,32 +82,39 @@ def process_new_orders() -> None:
     for symbol in held_assets:
         if 'order_id' in held_assets[symbol]:
             try:
-                buy_order = alpaca_client.get_order_by_id(
+                order = alpaca_client.get_order_by_id(
                     order_id=Binary.as_uuid(held_assets[symbol]['order_id']))
             except AttributeError as aerr:
-                message = 'Error getting buy order for: ' + symbol
+                message = 'Error getting order for: ' + symbol
                 message += '. Exception: ' + repr(aerr)
                 telegram_bot.send_message(
                     text=message, chat_id=CHAT_DECRYPTED)
                 raise ProcessNewOrdersError
-            # Sleep for API
             sleep(0.3)
-            if buy_order.status != OrderStatus.FILLED:
+            if order.status != OrderStatus.FILLED:
                 message = 'Unexpected order status for: ' + symbol
-                message += '. Status: ' + repr(buy_order.status)
+                message += '. Status: ' + repr(order.status)
                 telegram_bot.send_message(
                     text=message, chat_id=CHAT_DECRYPTED)
                 raise ProcessNewOrdersError
 
-            bought_quantity = int(buy_order.filled_qty)
-            bought_price = float(buy_order.filled_avg_price)
-            stop_loss_price = round(
-                number=(bought_price * ((100 - STOP_LOSS_PERCENT) / 100)),
-                ndigits=2)
+            filled_quantity = int(order.filled_qty)
+            filled_price = float(order.filled_avg_price)
+            is_long = held_assets[symbol]['is_long']
+            if is_long:
+                stop_loss_price = round(
+                    number=(filled_price * ((100 - STOP_LOSS_PERCENT) / 100)),
+                    ndigits=2)
+                stop_loss_side = OrderSide.SELL
+            else:
+                stop_loss_price = round(
+                    number=(filled_price * ((100 + STOP_LOSS_PERCENT) / 100)),
+                    ndigits=2)
+                stop_loss_side = OrderSide.BUY
 
             order_request = StopOrderRequest(
-                symbol=symbol, qty=bought_quantity,
-                side=OrderSide.SELL, type=OrderType.MARKET,
+                symbol=symbol, qty=filled_quantity,
+                side=stop_loss_side, type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
                 stop_price=stop_loss_price)
             try:
@@ -123,9 +130,13 @@ def process_new_orders() -> None:
             telegram_bot.send_message(
                 text=message, chat_id=CHAT_DECRYPTED)
 
+            update_object = {
+                'target_met': False,
+                'is_long': is_long
+            }
             held_asset_collection.update_one(
                 filter={'my_id': environ.get('HELD_ASSETS_ID')},
-                update={'$set': {symbol: {'target_met': False}}})
+                update={'$set': {symbol: update_object}})
 
 
 class ProcessNewOrdersError(Exception):

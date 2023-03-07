@@ -11,7 +11,7 @@ from pymongo import MongoClient, ASCENDING
 TARGET_RSI = 30
 funds = 10000
 buy_amount = 1000
-# dict[str, list(float, int, bool)]
+# dict[symbol, list(close, quantity, goal_met, is_long)]
 portfolio = {}
 
 mongo_client = MongoClient(environ.get('MONGO_CONNECTION_STRING'))
@@ -25,27 +25,48 @@ for symbol in mongo_db.list_collection_names():
     for asset in asset_cursor.sort(key_or_list='date', direction=ASCENDING):
         close = asset['close']
 
-        # If already owned, check for sell
+        # If already active, check for exit
         if symbol in portfolio:
-            if close <= (0.9 * portfolio[symbol][0]):
-                print('Sell loss: ' + symbol
-                      + ' - ' + repr(close)
-                      + ' - ' + asset['date'].strftime('%d-%m-%Y'))
-                funds += (portfolio[symbol][1] * close)
-                portfolio.pop(symbol)
-                continue
-            elif close >= (1.1 * portfolio[symbol][0]):
-                portfolio[symbol][2] = True
+            # Long
+            if portfolio[symbol][3]:
+                if close <= (0.9 * portfolio[symbol][0]):
+                    print('Sell long loss: ' + symbol
+                          + ' - ' + repr(close)
+                          + ' - ' + asset['date'].strftime('%d-%m-%Y'))
+                    funds += (portfolio[symbol][1] * close)
+                    portfolio.pop(symbol)
+                    continue
+                elif close >= (1.1 * portfolio[symbol][0]):
+                    portfolio[symbol][2] = True
 
-            if (portfolio[symbol][2]
-                    and asset['macd'] <= asset['macd_signal']):
-                print('Sell gain: ' + symbol
-                      + ' - ' + repr(close)
-                      + ' - ' + asset['date'].strftime('%d-%m-%Y'))
-                funds += (portfolio[symbol][1] * close)
-                portfolio.pop(symbol)
+                if (portfolio[symbol][2]
+                        and asset['macd'] <= asset['macd_signal']):
+                    print('Sell long gain: ' + symbol
+                          + ' - ' + repr(close)
+                          + ' - ' + asset['date'].strftime('%d-%m-%Y'))
+                    funds += (portfolio[symbol][1] * close)
+                    portfolio.pop(symbol)
+            # Short
+            else:
+                if close >= (1.1 * portfolio[symbol][0]):
+                    print('Buy short loss: ' + symbol
+                          + ' - ' + repr(close)
+                          + ' - ' + asset['date'].strftime('%d-%m-%Y'))
+                    funds -= (portfolio[symbol][1] * close)
+                    portfolio.pop(symbol)
+                    continue
+                elif close <= (0.9 * portfolio[symbol][0]):
+                    portfolio[symbol][2] = True
 
-        # If not already owned, check for buy
+                if (portfolio[symbol][2]
+                        and asset['macd'] >= asset['macd_signal']):
+                    print('Buy short gain: ' + symbol
+                          + ' - ' + repr(close)
+                          + ' - ' + asset['date'].strftime('%d-%m-%Y'))
+                    funds -= (portfolio[symbol][1] * close)
+                    portfolio.pop(symbol)
+
+        # If not already owned, check for long
         elif asset['macd'] > asset['macd_signal']:
             filtered_rsi = [rsi_value for rsi_value in asset['rsi']
                             if rsi_value < TARGET_RSI]
@@ -53,7 +74,7 @@ for symbol in mongo_db.list_collection_names():
                 filtered_trend = [trend_value for trend_value in asset['trend']
                                   if trend_value]
                 if filtered_trend:
-                    print('Buy signal: ' + symbol
+                    print('Long signal: ' + symbol
                           + ' - ' + repr(close)
                           + ' - ' + asset['date'].strftime('%d-%m-%Y'))
                     if close > buy_amount:
@@ -63,7 +84,26 @@ for symbol in mongo_db.list_collection_names():
                     else:
                         quantity = floor(buy_amount / close)
                         funds -= (quantity * close)
-                        portfolio[symbol] = [close, quantity, False]
+                        portfolio[symbol] = [close, quantity, False, True]
+        # Check for short
+        elif asset['macd'] < asset['macd_signal']:
+            filtered_rsi = [rsi_value for rsi_value in asset['rsi']
+                            if rsi_value > (100 - TARGET_RSI)]
+            if filtered_rsi:
+                filtered_trend = [trend_value for trend_value in asset['trend']
+                                  if not trend_value]
+                if filtered_trend:
+                    print('Short signal: ' + symbol
+                          + ' - ' + repr(close)
+                          + ' - ' + asset['date'].strftime('%d-%m-%Y'))
+                    if close > buy_amount:
+                        print('But price is higher than buy_amount!')
+                    elif funds < buy_amount:
+                        print('But not enough money!')
+                    else:
+                        quantity = floor(buy_amount / close)
+                        funds += (quantity * close)
+                        portfolio[symbol] = [close, quantity, False, False]
 
 alpaca_client = StockHistoricalDataClient(
     api_key=environ.get('APCA_API_KEY_ID'),
