@@ -109,7 +109,7 @@ def execute_entry_orders(
         telegram_bot.send_message(text=message, chat_id=CHAT_DECRYPTED)
         raise ManageTradesError
     sleep(0.3)
-    cash_on_hand = float(account.equity)
+    cash_on_hand = float(account.buying_power)
     txn_amount = cash_on_hand / (MAX_OPEN_POSITIONS - num_positions)
     message += '. ' + str(txn_amount)
     for symbol, closing_price in signals.items():
@@ -247,7 +247,8 @@ def manage_trades() -> None:
                         text=message, chat_id=CHAT_DECRYPTED)
                     held_asset_collection.update_one(
                         filter={'my_id': HELD_ASSETS_ID},
-                        update={'$set': {symbol: {'target_met': True}}})
+                        update={'$set': {symbol: {'target_met': True,
+                                                  'is_long': is_long}}})
                     held_assets[symbol]['target_met'] = True
             # Short
             else:
@@ -260,7 +261,8 @@ def manage_trades() -> None:
                         text=message, chat_id=CHAT_DECRYPTED)
                     held_asset_collection.update_one(
                         filter={'my_id': HELD_ASSETS_ID},
-                        update={'$set': {symbol: {'target_met': True}}})
+                        update={'$set': {symbol: {'target_met': True,
+                                                  'is_long': is_long}}})
                     held_assets[symbol]['target_met'] = True
         # If target has been hit, check for macd crossover
         if held_assets[symbol]['target_met']:
@@ -290,7 +292,7 @@ def manage_trades() -> None:
                 signals=long_signals,
                 num_positions=position_tracker,
                 is_long=True)
-    return
+
     # Determine short signals and place sell orders
     if position_tracker < MAX_OPEN_POSITIONS:
         short_signals = {}
