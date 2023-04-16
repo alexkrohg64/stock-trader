@@ -1,5 +1,5 @@
-"""Display any upcoming entry signals. Run after 5PM"""
-from datetime import date, datetime
+"""Display any upcoming entry signals"""
+from datetime import date, datetime, timedelta
 from os import environ
 
 from pymongo import MongoClient
@@ -17,6 +17,11 @@ short_signals = []
 for symbol in stock_db.list_collection_names():
     asset_collection = stock_db.get_collection(name=symbol)
     asset_item = asset_collection.find_one(filter={'date': today})
+    counter = 0
+    while asset_item is None and counter < 3:
+        today -= timedelta(days=1)
+        counter += 1
+        asset_item = asset_collection.find_one(filter={'date': today})
     if asset_item is None:
         print('No data found for: ' + symbol)
         print('Abort!')
