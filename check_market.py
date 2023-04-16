@@ -105,13 +105,14 @@ def check_market_open() -> None:
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         raise CheckMarketError
 
-    if len(trading_calendar) != 1:
+    if len(trading_calendar) > 1:
         error_message = 'Unexpected number of trading days returned! : '
         error_message += repr(len(trading_calendar))
         telegram_bot.send_message(text=error_message, chat_id=CHAT_DECRYPTED)
         raise CheckMarketError
 
-    market_is_open = trading_calendar[0].date == today
+    # API now only returns an object when the market is open
+    market_is_open = len(trading_calendar) == 1
     update_dict = {
         'market_is_open': market_is_open,
         'day_of_month': today.day
